@@ -86,7 +86,7 @@ Run `/orchestrate <step number or issue numbers>` to start.
 
 | Agent | Role | Writes |
 |---|---|---|
-| `product` | Drafts user stories as GitHub issues, checks PRs against their acceptance criteria | GitHub issues and comments only |
+| `product` | Drafts user stories as GitHub issues, checks PRs against their acceptance criteria | GitHub issues, comments, Draft column only |
 | `api` | Go backend, Postgres, search, Claude calls, ingestion, eval harness | backend code, PRs |
 | `ui` | React frontend, built against `api/openapi.yaml` | `web/` only, PRs |
 | `reviewer` | Runs tests and evals, reviews every PR before merge | PR review comments only |
@@ -94,15 +94,27 @@ Run `/orchestrate <step number or issue numbers>` to start.
 ### Backlog: GitHub issues
 
 The backlog is the GitHub issues of this repository, read and written with the `gh` CLI.
-A GitHub Project board can show them as a Kanban; agents rely only on labels.
+**Status lives on the project board** ([Grimoire project](https://github.com/users/florianorpeliere/projects/6),
+owner `florianorpeliere`, number 6), in its single-select **Status** field. It is the only source of truth
+for status: there are no status labels.
+
+| Board column (Status) | Meaning | Moved there by |
+|---|---|---|
+| Draft | Written, not refined yet | product |
+| Ready | Refined, can be built | **Florian only** (drag the card) |
+| In progress | An agent is building it | api / ui |
+| In review | PR open, under review | api / ui |
+| Done | Issue closed (PR merged) | the board's "Item closed" workflow |
+
+Agents read and move cards only through two scripts (they need `gh auth refresh -s project` once):
+- `scripts/project-items.sh "<Status>"` lists the issues in a column.
+- `scripts/project-status.sh <issue> "<Status>"` moves an issue (and adds it to the board if missing).
+
+Labels, used for routing and filtering only:
 
 | Label | Meaning | Set by |
 |---|---|---|
 | `story` | A user story (template: `.github/ISSUE_TEMPLATE/story.md`) | product |
-| `status/draft` | Written, not refined yet | product |
-| `status/ready` | Refined, can be built | **Florian only** |
-| `status/in-progress` | An agent is building it | api / ui |
-| `status/in-review` | PR open, under review | api / ui |
 | `area/api`, `area/ui`, `area/evals` | Which agent builds it | product |
 | `step/1` … `step/6` | Week of the V1 plan | product |
 
@@ -111,10 +123,10 @@ Branches are named `<issue number>-short-title`; every PR starts with `Closes #<
 
 ### Flow for each step
 
-1. `product` drafts or updates the issues for the step (`status/draft`).
-2. The orchestrator lists them for Florian. **Stop**: Florian refines them on GitHub and marks
-   the ones to build `status/ready`.
-3. The orchestrator hands each ready issue to `api` or `ui` by its `area/` label. When both work
+1. `product` drafts or updates the issues for the step (Draft column).
+2. The orchestrator lists them for Florian. **Stop**: Florian refines them on GitHub and drags
+   the ones to build to the Ready column.
+3. The orchestrator hands each Ready issue to `api` or `ui` by its `area/` label. When both work
    at once, each uses its own git worktree, and they meet only on `api/openapi.yaml`.
 4. `reviewer` reviews every PR. Blocking findings go back to the author agent (two rounds max).
 5. `product` checks each PR against its issue's acceptance criteria.
