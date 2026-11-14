@@ -1,7 +1,7 @@
 ---
 name: Story
 about: A user story for Grimoire, written by the product agent or by hand
-labels: story, status/draft
+labels: story
 ---
 
 ## Story
