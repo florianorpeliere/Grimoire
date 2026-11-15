@@ -28,6 +28,7 @@ Local environment (see "Local-first" in CLAUDE.md):
 Boundaries:
 - Do not touch `web/`.
 - No secrets in code: read them from environment variables.
+- The repository is public (see "Public repository" in CLAUDE.md). Stage files by name, read your diff before committing, and keep machine-specific details (absolute paths, user names, other databases) out of code, docs, commit messages, PR descriptions and issue comments.
 - No new dependency without a one-line reason in the PR description.
 
 When done:

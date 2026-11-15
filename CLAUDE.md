@@ -30,6 +30,29 @@ Out of scope for V1 (do not build, flag it if a task drifts there):
 - Never ingest or reproduce text from paid books.
 - GM notes are private: never shared across accounts, deletable on request.
 
+## Public repository
+
+This repository is public. Everything pushed to it, including issues, PR descriptions, comments
+and `docs/agent-log.md`, can be read by anyone and stays in the history.
+
+Never commit or post:
+- Secrets of any kind: API keys, tokens, passwords, connection strings with credentials, `.env`
+  files. Only `.env.example` with placeholder values.
+- Anything that is not about Grimoire itself: absolute local paths, user names, email addresses,
+  accounts, other databases, other projects, or any other detail about the developer's setup.
+  This includes the agent log: it records how the agents built the product, nothing else.
+- Third-party content we have no right to redistribute: the downloaded SRD Markdown conversion,
+  the SRD PDF, text from paid books.
+- Real GM notes or any real user data. Tests and evals use the fictional campaign only.
+- Database dumps, embedding exports, logs and command output that may contain any of the above.
+
+Rules:
+- Stage files by name and read the diff before every commit; never `git add -A` blindly.
+- Documentation describes the setup generically (default ports, placeholder credentials),
+  not one person's machine.
+- If something sensitive is committed or posted, stop and tell Florian at once. Do not try to
+  hide it with a follow-up commit: the history keeps it, and a leaked secret must be revoked.
+
 ## Architecture
 
 - Backend: Go, REST API, accounts and campaigns. Runs locally for now (see "Local-first").
