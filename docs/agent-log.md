@@ -108,7 +108,7 @@ What the orchestrator did (no subagent: machine inspection and installs stay wit
 - Inspected the machine: Apple M2 Pro (8 performance + 4 efficiency cores), 16 GB RAM, 94 GB free,
   Ollama 0.40.14, Go 1.27.1.
 - Found that the "Postgres already installed" assumption did not hold as is: the local instance is
-  PostgreSQL 13.18 (end of life), hosts Florian's other databases, has no pgvector, and Homebrew
+  PostgreSQL 13.18 (end of life), is already in use, has no pgvector, and Homebrew
   only bottles pgvector for PostgreSQL 17 and 18. Asked Florian; he chose a separate PostgreSQL 17.
 - Installed `postgresql@17` (17.12) and `pgvector` (0.8.7) with Homebrew, on port 5433, created
   the `grimoire` and `grimoire_test` databases, checked that `CREATE EXTENSION vector` and a
@@ -136,7 +136,7 @@ Observations for the article:
 - "I already have Postgres" was true and still not sufficient. Checking the machine before
   rewriting the stories avoided a story built on a wrong premise.
 - The orchestrator kept system-level installs to itself and wrote into the agent definitions
-  that agents never install software or touch other databases.
+  that agents never install software and only use the project's own database.
 
 Result of the second `product` pass: issues #3 to #9 updated with a comment each, and a new
 story #10 "Retrieval smoke set: 20 rules questions with expected SRD chunks" (`area/evals`,
@@ -162,3 +162,41 @@ estimate of one 150-question eval run: between about $0.20 (Haiku 5.5) and about
 from list prices and assumed token counts, not measured.
 
 Stop 1 is still open: Florian moves issues to Ready; wave 1 is #3 and #4.
+
+### 2026-11-15 — Stop 1, continued: chunking rule and public-repository hygiene
+
+Florian validated the chunking rule, dropped the licence follow-up on the SRD source for now
+(accepted risk), and asked for care about what goes into the public repository.
+
+Orchestrator:
+- Answered two open questions by reading the already-downloaded 5.2.1 Markdown instead of asking
+  again: the four smoke-set monsters exist under the proposed names, and conditions are Rules
+  Glossary entries tagged in their title, as `product` had suspected. The orchestrator's earlier
+  default ("kind derived from the chapter") was wrong for conditions.
+- Chunking rule validated by Florian: one chunk per file for entities; one chunk per level-2
+  heading for rules chapters and classes.
+- Audited tracked files, git history, PR and issue bodies for secrets. None found. Secret
+  scanning and push protection were already enabled on the repository.
+- Added a "Public repository" section to `CLAUDE.md`, matching rules in the four agent
+  definitions (a leak is a blocking review finding), and a `.gitignore`.
+
+| Agent | Task |
+|---|---|
+| `product` (Opus), third pass | Apply the chunking rule to #5, close the monster question on #10, record the licence decision on #4, make #3's README criteria generic |
+
+Observation for the article: three `product` passes for one refinement stop. Each pass was
+cheap, but the pattern is "human decides one thing, an agent rewrites issues". Batching the
+decisions before the first rewrite would have saved two passes.
+
+Result of the third `product` pass: #3, #4, #5 and #10 updated, one comment each, all eight
+issues still in Draft. Harness-reported usage: 32,687 subagent tokens, 9 tool calls, about 2 minutes.
+The agent also removed machine details from #3 on its own initiative under the new
+"Public repository" rules, and flagged that it had only checked the four issues it touched.
+
+Remaining open questions, none of them blocking wave 1: scripted cleanup budget (#4), dimension
+change on model swap (#7), query instruction prefix (#8), form of the smoke-set runner (#10).
+
+Observation for the article: PR #11 was merged by Florian while the orchestrator was still
+working on its branch. The orchestrator noticed only because the remote `main` hash did not
+match its expectation just before a push. Checking remote state before any
+destructive git operation is not optional when a human and an agent share a repository.
