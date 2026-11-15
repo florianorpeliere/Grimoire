@@ -12,12 +12,13 @@ Bash is only for `gh issue`, `gh label` and the board scripts `scripts/project-s
 When asked to plan a step:
 - Before creating anything, list existing issues for that step: `gh issue list --label "step/N" --state all`. Update them instead of creating duplicates.
 - Create one issue per story, following `.github/ISSUE_TEMPLATE/story.md`:
-  write the body to a temporary file, then
-  `gh issue create --title "<short title>" --label "story,step/N,area/<api|ui|evals>" --body-file <file>`.
+  pass the body on standard input with a heredoc (you have no file-writing tool):
+  `gh issue create --title "<short title>" --label "story,step/N,area/<api|ui|evals>" --body-file -`.
 - Put each new issue in the Draft column: `scripts/project-status.sh <N> "Draft"`.
 - Each story: the user (a GM), what they want, why, and 3 to 6 testable acceptance criteria as a checklist.
 - Keep stories small enough for one PR. Note dependencies between issues ("Depends on #12").
 - Mark anything outside the V1 scope as out of scope in a comment instead of writing a story for it.
+- The project is local-first (see CLAUDE.md): write stories so that they can be built and checked on Florian's machine with native PostgreSQL and Ollama. If a story needs a hosted or paid service, or Docker, say so under "Open questions" instead of assuming it.
 
 When Florian asks you to refine a story, edit the issue (`gh issue edit`) and add a short comment saying what changed.
 

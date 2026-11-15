@@ -32,8 +32,10 @@ Out of scope for V1 (do not build, flag it if a task drifts there):
 
 ## Architecture
 
-- Backend: Go, REST API, accounts and campaigns. Deployed on Cloud Run (GCP).
+- Backend: Go, REST API, accounts and campaigns. Runs locally for now (see "Local-first").
 - Storage: PostgreSQL with pgvector (embeddings) and full-text search (keywords).
+- Embeddings: a local model served by Ollama, behind a Go interface so the provider can change.
+  The model name and dimension are stored with each embedded row.
 - Search: hybrid (vector + keyword). Spell and condition names are found better by keyword.
 - Generation: Claude API. Answer only from the retrieved passages, cite their ids,
   say clearly when the answer is not in them. Stream the answer.
@@ -44,6 +46,22 @@ Out of scope for V1 (do not build, flag it if a task drifts there):
 - Frontend: React, streaming answers, clickable citations.
 - Contract between backend and frontend: `api/openapi.yaml`. It is written first and changed only
   with the GM-owner's approval (Florian).
+
+### Local-first (until Florian says otherwise)
+
+Everything runs on Florian's machine (Apple M2 Pro, 16 GB RAM, macOS). There is no hosting budget yet.
+
+- No hosted or paid service by default: no Cloud Run, no managed database, no hosted embedding API.
+  A story that needs one, or implies a recurring cost, is flagged to Florian before any work.
+- Services are native, not containers: Go toolchain, PostgreSQL and Ollama installed on the machine.
+  Docker is not required and must not be assumed to be running.
+- All endpoints come from environment variables (`DATABASE_URL`, `OLLAMA_HOST`), so the same
+  binaries can later point at hosted services without code changes.
+- Tests that need Postgres or Ollama skip with a clear message when the service is unreachable;
+  they never fail for that reason and never start services themselves.
+- Mind the 16 GB of RAM: keep local models small, and do not load several models at once.
+- The Claude API (generation, step 2) is the one planned external, paid dependency.
+  Its budget is an open decision.
 
 Proposed layout:
 
@@ -134,9 +152,10 @@ Branches are named `<issue number>-short-title`; every PR starts with `Closes #<
 
 ## Six-week plan
 
-1. Foundations: Go project, Postgres + pgvector, SRD chunked and indexed, CLI questions.
+1. Foundations: Go project, local Postgres + pgvector, SRD chunked and indexed, CLI questions.
 2. Quality: cited answers, eval set of 150 questions, first measurement, targets set.
-3. Web UI: accounts, streaming answers, clickable citations, deployed on Cloud Run.
+3. Web UI: accounts, streaming answers, clickable citations, running locally
+   (hosting is an open decision, see below).
 4. Session notes: import per campaign, campaign questions, fictional campaign in the evals.
 5. Private beta: Florian's table + 5 GMs, "wrong answer" button, fixes, evals replayed.
 6. Launch: open beta (Reddit, Discord), README and article published.
@@ -145,5 +164,8 @@ Branches are named `<issue number>-short-title`; every PR starts with `Closes #<
 
 - Claude model for answers, and a lighter one for chunking and eval judging (after first cost measurement).
 - Monthly budget cap for the API and hosting during the beta.
+- Hosting: where and when Grimoire is deployed. The private beta (step 5) needs it; Cloud Run was
+  the original target. Until decided, everything is local-first.
+- Embedding model: local model via Ollama for now; compare with a hosted model on the eval set in step 2.
 - Free beta with a per-account quota; pricing later.
 - Final product name: check domain and existing RPG products named "Grimoire".
