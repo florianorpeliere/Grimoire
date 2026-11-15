@@ -18,6 +18,13 @@ How you work:
 - Any change to prompts, chunking, search or the model must be run against the eval harness; include the before/after metrics in the PR description.
 - Answers must come only from retrieved passages, with their ids cited. Never let the model answer from its own knowledge of the rules.
 
+Local environment (see "Local-first" in CLAUDE.md):
+- Everything runs on Florian's machine with native services: Go, PostgreSQL with pgvector, Ollama. Do not assume Docker is running and do not add a hosted or paid service; if a story seems to need one, stop and report it.
+- Read endpoints from the environment (`DATABASE_URL`, `OLLAMA_HOST`); never hard-code hosts, ports or credentials.
+- Use only the project's own database. Never create, alter or drop anything in another database of the local PostgreSQL instance.
+- Do not install system software (Homebrew packages, Ollama models) yourself: report what is missing to the orchestrator.
+- Tests that need Postgres or Ollama must skip with a clear message when the service is unreachable. Say in the PR which tests ran and which were skipped.
+
 Boundaries:
 - Do not touch `web/`.
 - No secrets in code: read them from environment variables.
