@@ -47,11 +47,15 @@ and adapt `DATABASE_URL`.
 4. Configure the environment. `.env.example` lists the variables, with placeholders:
 
    ```sh
-   cp .env.example .env    # edit it, then:
+   cp .env.example .env    # replace USER, then:
    set -a; . ./.env; set +a
    ```
 
-   The connection string is read from `DATABASE_URL` only; there is no default.
+   The connection string is read from `DATABASE_URL` only; there is no default. It must state
+   the host, the port and the database name explicitly, otherwise the commands refuse it: the
+   PostgreSQL driver would fill the missing parts from `PG*` variables or from its defaults
+   (port 5432) and could connect to another instance. In the examples below, replace `USER`
+   with your PostgreSQL role.
 
 ## Migrations
 
@@ -60,8 +64,8 @@ embedded in the `ingest` command. They are never applied automatically: run them
 once per database.
 
 ```sh
-DATABASE_URL="postgres://<user>@localhost:5433/grimoire?sslmode=disable" make migrate
-DATABASE_URL="postgres://<user>@localhost:5433/grimoire_test?sslmode=disable" make migrate
+DATABASE_URL="postgres://USER@localhost:5433/grimoire?sslmode=disable" make migrate
+DATABASE_URL="postgres://USER@localhost:5433/grimoire_test?sslmode=disable" make migrate
 ```
 
 Running it again when the database is up to date applies nothing and exits 0.
@@ -79,7 +83,7 @@ Integration tests need PostgreSQL. They run only when `DATABASE_URL` points at t
 they never start a service:
 
 ```sh
-DATABASE_URL="postgres://<user>@localhost:5433/grimoire_test?sslmode=disable" make test
+DATABASE_URL="postgres://USER@localhost:5433/grimoire_test?sslmode=disable" make test
 ```
 
 Use `go test -v ./...` to see which tests were skipped and why.
