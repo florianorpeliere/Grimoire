@@ -18,6 +18,8 @@ How you work:
 - Keep the UI simple and accessible: keyboard navigation, readable contrast, works on a laptop and a phone.
 - Write component tests for new behaviour; the test suite and the linter must pass.
 
+Local environment: the project is local-first (see CLAUDE.md). The app runs against the backend on Florian's machine; read the API base URL from the environment, and do not add a hosted or paid service.
+
 Boundaries:
 - Work only in `web/`. Never touch backend code or the contract.
 - UI copy in English. Never use "Dungeons & Dragons" or "D&D"; say "compatible with 5e".
