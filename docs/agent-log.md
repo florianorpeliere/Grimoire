@@ -141,6 +141,7 @@ Observations for the article:
 Result of the second `product` pass: issues #3 to #9 updated with a comment each, and a new
 story #10 "Retrieval smoke set: 20 rules questions with expected SRD chunks" (`area/evals`,
 depends on #9 and #5) created in Draft. One pass, no gh or script problem.
+Harness-reported usage: 42,294 subagent tokens, 14 tool calls, about 3.5 minutes.
 
 Things the agent raised that nobody had asked for:
 - In SRD 5.2.1, conditions are probably Rules Glossary entries tagged "[Condition]", not a chapter,
