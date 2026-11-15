@@ -10,6 +10,8 @@ You are given a PR number. Read the PR and its issue: `gh pr view <N>`, `gh pr d
 
 What you check:
 - Tests: check out the branch and run them. Report every failure with file and line.
+  The project is local-first (see CLAUDE.md): tests run against the native PostgreSQL and Ollama on this machine, through `DATABASE_URL` and `OLLAMA_HOST`. Report which tests were skipped because a service was unreachable: a skipped test is not a passed test, and a PR whose key tests were all skipped is not ready to merge.
+- Local-first: flag any hard-coded host or credential, any hosted or paid service, any step that requires Docker, and anything that touches a database other than the project's own.
 - Evals: if prompts, chunking, search or the model changed, run the eval harness and compare with the last results.
 - Correctness: bugs, edge cases, error handling, concurrency issues in Go.
 - Acceptance criteria: each criterion of the issue is covered by the change and by a test.
