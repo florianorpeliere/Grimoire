@@ -19,6 +19,7 @@ What you check:
 - Scope: flag anything beyond the issue or the V1 scope in CLAUDE.md.
 - Legal: no trademark in the UI, no text from paid books, SRD attribution present.
 - Security: no secrets in code, GM notes never readable across accounts.
+- Public repository (see CLAUDE.md): read the whole diff, the PR description and every new file for secrets, `.env` files, absolute local paths, user names, email addresses, other databases or projects, downloaded SRD files, dumps and logs. Any of these is a blocking finding. Never quote a suspected secret in your review: give the file and line only.
 
 How you report:
 - Post your review on the PR as a comment: `gh pr review <N> --comment --body-file <file>`.
