@@ -5,6 +5,8 @@ package dbtest
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -16,13 +18,16 @@ import (
 const Name = "grimoire_test"
 
 // Open connects to the database named by DATABASE_URL and returns it.
-// The test is skipped when DATABASE_URL is unset, when the database is
-// unreachable, or when it is not the grimoire_test database.
+// The test is skipped when DATABASE_URL is unset or incomplete, when the
+// database is unreachable, or when it is not the grimoire_test database.
 func Open(t testing.TB) *sql.DB {
 	t.Helper()
 	url, err := db.URLFromEnv(os.Getenv)
-	if err != nil {
+	if errors.Is(err, db.ErrNoURL) {
 		t.Skipf("skipping integration test: %s is not set (point it at the %s database to run it)", db.EnvURL, Name)
+	}
+	if err != nil {
+		t.Skipf("skipping integration test: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -35,25 +40,45 @@ func Open(t testing.TB) *sql.DB {
 		conn.Close()
 		t.Skipf("skipping integration test: cannot read the database name from %s: %v", db.EnvURL, err)
 	}
-	if name != Name {
+	if err := checkName(name); err != nil {
 		conn.Close()
-		t.Skipf("skipping integration test: %s points at database %q, integration tests only run against %q", db.EnvURL, name, Name)
+		t.Skipf("skipping integration test: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
 	return conn
 }
 
-// Reset empties the test database by recreating the public schema,
-// which also drops the extensions installed in it.
+// checkName accepts only the test database.
+func checkName(name string) error {
+	if name != Name {
+		return fmt.Errorf("%s points at database %q, integration tests only run against %q", db.EnvURL, name, Name)
+	}
+	return nil
+}
+
+// Reset empties the test database by recreating the public schema, which
+// also drops the extensions installed in it.
+//
+// The database check and the drop are one statement, so they run on the same
+// connection and Reset refuses any database but grimoire_test, whatever
+// connection it is given.
 func Reset(t testing.TB, conn *sql.DB) {
 	t.Helper()
-	ctx := context.Background()
-	for _, stmt := range []string{
-		"DROP SCHEMA IF EXISTS public CASCADE",
-		"CREATE SCHEMA public",
-	} {
-		if _, err := conn.ExecContext(ctx, stmt); err != nil {
-			t.Fatalf("reset test database: %s: %v", stmt, err)
-		}
+	if _, err := conn.ExecContext(context.Background(), resetStatement(Name)); err != nil {
+		t.Fatalf("reset test database: %v", err)
 	}
+}
+
+// resetStatement drops and recreates the public schema, but raises an error
+// instead when the current database is not want. want is a trusted constant.
+func resetStatement(want string) string {
+	return fmt.Sprintf(`DO $reset$
+BEGIN
+	IF current_database() <> '%s' THEN
+		RAISE EXCEPTION 'refusing to reset database %%: only %s may be reset', current_database();
+	END IF;
+	DROP SCHEMA IF EXISTS public CASCADE;
+	CREATE SCHEMA public;
+END
+$reset$`, want, want)
 }

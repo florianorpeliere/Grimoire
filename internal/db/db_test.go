@@ -20,20 +20,33 @@ func TestURLFromEnv(t *testing.T) {
 		{name: "unset", env: map[string]string{}, wantErr: db.ErrNoURL},
 		{name: "blank", env: map[string]string{"DATABASE_URL": "   "}, wantErr: db.ErrNoURL},
 		{
-			name: "set",
-			env:  map[string]string{"DATABASE_URL": "postgres://user@db.example:5433/grimoire"},
-			want: "postgres://user@db.example:5433/grimoire",
+			name: "valid URL",
+			env:  map[string]string{"DATABASE_URL": "postgres://user@db.example:5433/grimoire?sslmode=disable"},
+			want: "postgres://user@db.example:5433/grimoire?sslmode=disable",
 		},
 		{
-			name: "trimmed",
-			env:  map[string]string{"DATABASE_URL": " postgres://db.example/grimoire\n"},
-			want: "postgres://db.example/grimoire",
+			name: "postgresql scheme, trimmed",
+			env:  map[string]string{"DATABASE_URL": " postgresql://db.example:5433/grimoire_test\n"},
+			want: "postgresql://db.example:5433/grimoire_test",
 		},
 		{
 			name:    "other variables are ignored",
-			env:     map[string]string{"PGHOST": "db.example", "PGPORT": "5433"},
+			env:     map[string]string{"PGHOST": "db.example", "PGPORT": "5433", "PGDATABASE": "grimoire"},
 			wantErr: db.ErrNoURL,
 		},
+		// What a shell leaves after sourcing an unquoted <user> placeholder.
+		{name: "empty authority", env: map[string]string{"DATABASE_URL": "postgres://"}, wantErr: db.ErrIncompleteURL},
+		{name: "empty host", env: map[string]string{"DATABASE_URL": "postgres://:5433/grimoire"}, wantErr: db.ErrIncompleteURL},
+		{name: "missing port", env: map[string]string{"DATABASE_URL": "postgres://db.example/grimoire"}, wantErr: db.ErrIncompleteURL},
+		{name: "missing database", env: map[string]string{"DATABASE_URL": "postgres://db.example:5433"}, wantErr: db.ErrIncompleteURL},
+		{name: "database slash only", env: map[string]string{"DATABASE_URL": "postgres://db.example:5433/"}, wantErr: db.ErrIncompleteURL},
+		{name: "several hosts", env: map[string]string{"DATABASE_URL": "postgres://a.example:5433,b.example:5433/grimoire"}, wantErr: db.ErrIncompleteURL},
+		{name: "host parameter overrides", env: map[string]string{"DATABASE_URL": "postgres://db.example:5433/grimoire?host=/tmp"}, wantErr: db.ErrIncompleteURL},
+		{name: "port parameter overrides", env: map[string]string{"DATABASE_URL": "postgres://db.example:5433/grimoire?port=5432"}, wantErr: db.ErrIncompleteURL},
+		{name: "dbname parameter overrides", env: map[string]string{"DATABASE_URL": "postgres://db.example:5433/grimoire?dbname=other"}, wantErr: db.ErrIncompleteURL},
+		{name: "service parameter", env: map[string]string{"DATABASE_URL": "postgres://db.example:5433/grimoire?service=other"}, wantErr: db.ErrIncompleteURL},
+		{name: "keyword/value form", env: map[string]string{"DATABASE_URL": "host=db.example port=5433 dbname=grimoire"}, wantErr: db.ErrIncompleteURL},
+		{name: "unparsable", env: map[string]string{"DATABASE_URL": "postgres://%zz"}, wantErr: db.ErrIncompleteURL},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -53,11 +66,19 @@ func TestMigrate(t *testing.T) {
 	dbtest.Reset(t, conn)
 	ctx := context.Background()
 
+	all, err := db.Versions(conn)
+	if err != nil {
+		t.Fatalf("list migrations: %v", err)
+	}
+	if len(all) == 0 {
+		t.Fatal("no embedded migrations")
+	}
+
 	steps := []struct {
 		name        string
 		wantApplied []int64
 	}{
-		{name: "empty database applies all migrations", wantApplied: []int64{1}},
+		{name: "empty database applies all migrations", wantApplied: all},
 		{name: "second run changes nothing", wantApplied: []int64{}},
 	}
 	for _, s := range steps {
