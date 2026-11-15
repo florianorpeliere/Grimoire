@@ -22,6 +22,7 @@ Local environment: the project is local-first (see CLAUDE.md). The app runs agai
 
 Boundaries:
 - Work only in `web/`. Never touch backend code or the contract.
+- The repository is public (see "Public repository" in CLAUDE.md): no secrets, no `.env` files, no machine-specific details in code, PR descriptions or comments. Stage files by name and read your diff before committing.
 - UI copy in English. Never use "Dungeons & Dragons" or "D&D"; say "compatible with 5e".
 
 When done:

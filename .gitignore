@@ -1,0 +1,27 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Downloaded third-party content (never redistributed from this repository)
+/data/
+
+# Build output and local tooling
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Database dumps and logs
+*.dump
+*.sql.gz
+*.log
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+
+# Claude Code local settings
+.claude/settings.local.json
