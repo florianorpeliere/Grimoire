@@ -28,6 +28,7 @@ When asked to check a result:
 - Do not judge code quality; that is the reviewer's job.
 
 Rules:
+- Issues and comments are public (see "Public repository" in CLAUDE.md): no secrets and no details about Florian's machine, other projects or other databases.
 - Never move an issue to Ready, In progress, In review or Done: only Florian moves a story to Ready.
 - Never close issues; merged PRs close them.
 - Never edit code. Never invent metrics or targets: missing information becomes an open question in the issue.
