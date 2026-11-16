@@ -26,28 +26,33 @@ sha256() {
 command -v git > /dev/null 2>&1 || fail "git is not installed"
 git check-ignore -q "$OUT" || fail "$DEST is not git-ignored; refusing to download third-party content there"
 
-# 1. Fetch only the pinned commit, without hooks, and check out only the single Markdown file.
+# A previous output is removed first: whatever happens below, data/srd/ never keeps a Markdown file
+# that was not verified against the pin.
+rm -f "$OUT" "$OUT.tmp" "$OUT.unverified"
+
+# 1. Fetch only the pinned commit, without hooks, and read the one file as a git blob: no working
+#    tree, so no checkout filters and no symlink can be followed.
 rm -rf "$SRC"
 mkdir -p "$SRC"
 git init -q "$SRC"
 git -C "$SRC" remote add origin "$SRD_REPO_URL"
-git -C "$SRC" -c core.hooksPath=/dev/null fetch -q --depth 1 --filter=blob:none origin "$SRD_COMMIT"
-git -C "$SRC" sparse-checkout set --no-cone "/$SRD_REPO_FILE"
-git -C "$SRC" -c core.hooksPath=/dev/null -c advice.detachedHead=false checkout -q FETCH_HEAD
+git -C "$SRC" -c core.hooksPath=/dev/null fetch -q --depth 1 --filter=blob:none origin "$SRD_COMMIT" \
+  || fail "could not fetch commit $SRD_COMMIT from $SRD_REPO_URL"
 
-actual="$(git -C "$SRC" rev-parse HEAD)"
-[ "$actual" = "$SRD_COMMIT" ] || fail "checked-out commit is $actual, expected $SRD_COMMIT"
-[ -f "$SRC/$SRD_REPO_FILE" ] || fail "$SRD_REPO_FILE not found at commit $SRD_COMMIT"
+actual="$(git -C "$SRC" rev-parse FETCH_HEAD)"
+[ "$actual" = "$SRD_COMMIT" ] || fail "fetched commit is $actual, expected $SRD_COMMIT"
+mode="$(git -C "$SRC" ls-tree "$SRD_COMMIT" -- "$SRD_REPO_FILE" | cut -d ' ' -f 1)"
+[ "$mode" = "100644" ] || fail "$SRD_REPO_FILE is not a regular file at commit $SRD_COMMIT (mode '$mode')"
 
 # 2. Scripted cleanup (the only transformation, documented in docs/srd-source.md):
 #    the PDF has "Animals" as a chapter of its own (same heading size as "Monsters A–Z", listed as a
 #    chapter in the table of contents), but the conversion nests it as "## Animals" under
 #    "# Monsters A-Z". Promote "## Animals" and every heading after it by one level.
-awk '
-  /^```/ { fence = !fence }
-  !fence && /^# Monsters A-Z$/ { in_az = 1 }
-  !fence && in_az && $0 == "## Animals" { found++; promote = 1 }
-  !fence && promote && /^#+ / {
+#    The file has no code blocks, so every line starting with "#" is a heading.
+git -C "$SRC" cat-file blob "$SRD_COMMIT:$SRD_REPO_FILE" | awk '
+  /^# Monsters A-Z$/ { in_az = 1 }
+  in_az && $0 == "## Animals" { found++; promote = 1 }
+  promote && /^#+ / {
     if ($0 ~ /^# /) { print "unexpected chapter after Animals: " $0 > "/dev/stderr"; bad = 1 }
     sub(/^#/, "")
   }
@@ -56,12 +61,17 @@ awk '
     if (found != 1) { print "expected exactly one \"## Animals\" heading under \"# Monsters A-Z\", found " found + 0 > "/dev/stderr"; bad = 1 }
     exit bad
   }
-' "$SRC/$SRD_REPO_FILE" > "$OUT.tmp" || { rm -f "$OUT.tmp"; fail "cleanup failed"; }
-mv "$OUT.tmp" "$OUT"
+' > "$OUT.tmp" || { rm -f "$OUT.tmp"; fail "reading or cleaning $SRD_REPO_FILE failed"; }
 
-# 3. Reproducibility check: the result must be byte-identical on every run.
-digest="$(sha256 "$OUT")"
-[ "$digest" = "$SRD_MARKDOWN_SHA256" ] || fail "SHA-256 of $OUT is $digest, expected $SRD_MARKDOWN_SHA256 (see docs/srd-source.md)"
+# 3. Reproducibility check: the result must be byte-identical on every run. It is moved into place
+#    only on a match; otherwise it is kept as .unverified (for reviewing a pin change) and nothing
+#    is left at the canonical path.
+digest="$(sha256 "$OUT.tmp")"
+if [ "$digest" != "$SRD_MARKDOWN_SHA256" ]; then
+  mv "$OUT.tmp" "$OUT.unverified"
+  fail "SHA-256 of the cleaned Markdown is $digest, expected $SRD_MARKDOWN_SHA256. Nothing written to $OUT; the result is kept as $OUT.unverified for review (see docs/srd-source.md)"
+fi
+mv "$OUT.tmp" "$OUT"
 
 echo "Source:     $SRD_REPO_URL"
 echo "Commit:     $actual (matches the pin)"
