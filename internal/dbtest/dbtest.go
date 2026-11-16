@@ -71,11 +71,13 @@ func Reset(t testing.TB, conn *sql.DB) {
 
 // resetStatement drops and recreates the public schema, but raises an error
 // instead when the current database is not want. want is a trusted constant.
+// pg_catalog is explicit so a function planted earlier in search_path cannot
+// stand in for current_database().
 func resetStatement(want string) string {
 	return fmt.Sprintf(`DO $reset$
 BEGIN
-	IF current_database() <> '%s' THEN
-		RAISE EXCEPTION 'refusing to reset database %%: only %s may be reset', current_database();
+	IF pg_catalog.current_database() <> '%s' THEN
+		RAISE EXCEPTION 'refusing to reset database %%: only %s may be reset', pg_catalog.current_database();
 	END IF;
 	DROP SCHEMA IF EXISTS public CASCADE;
 	CREATE SCHEMA public;
