@@ -109,13 +109,15 @@ awk -v OFS='\t' '
   { kind = /^#+ / ? "heading" : (/^\|/ ? "table" : "text"); print NR, ch, kind, $0 }' "$MD" > "$WORK/md.lines"
 
 echo "SRD 5.2.1 Markdown vs official PDF (measurement only, no threshold)"
-echo "Markdown: $MD ($(wc -l < "$MD" | tr -d ' ') lines, SHA-256 matches the pin), output of commit $SRD_COMMIT"
-echo "PDF:      $PDF ($pages pages with text, SHA-256 matches the pin), text extracted with $(pdftotext -v 2>&1 | head -1)"
+md_line_count="$(awk 'END { print NR }' "$MD")"
+pdftotext_version="$(pdftotext -v 2>&1 | awk 'NR == 1')"
+echo "Markdown: $MD ($md_line_count lines, SHA-256 matches the pin), output of commit $SRD_COMMIT"
+echo "PDF:      $PDF ($pages pages with text, SHA-256 matches the pin), text extracted with $pdftotext_version"
 
 echo
 echo "== Attribution (ATTRIBUTION.md vs PDF page 1, compared with all whitespace removed)"
 pdf_p1="$(awk -F '\t' '$1 == 1 { printf "%s", $2 }' "$WORK/pdf.lines" | tr -d ' \t\n')"
-statement="$(grep '^This work includes material' ATTRIBUTION.md | tr -d ' \t\n')"
+statement="$(awk '/^This work includes material/' ATTRIBUTION.md | tr -d ' \t\n')"
 [ -n "$statement" ] || fail "no attribution statement found in ATTRIBUTION.md"
 case "$pdf_p1" in
   *"$statement"*) echo "statement verbatim in PDF page 1: yes" ;;
@@ -151,8 +153,14 @@ echo "heading level jumps of more than one level (e.g. # then ###): $jumps"
 
 echo
 echo "== Entity counts"
+# Every figure is computed into a variable first: an assignment from a failing pipeline stops the
+# script (set -e, pipefail), whereas a failure inside "echo $(...)" would print a silent 0.
+# count <ERE>: number of stdin lines matching the regex (0 is a valid result, not an error).
+count() { RE="$1" awk '$0 ~ ENVIRON["RE"] { n++ } END { print n + 0 }'; }
+lines() { awk 'END { print NR }' "$1"; }
 SCHOOL='(Abjuration|Conjuration|Divination|Enchantment|Evocation|Illusion|Necromancy|Transmutation)'
 # Markdown side.
+: > "$WORK/md.spells"; : > "$WORK/md.monsters"; : > "$WORK/md.conditions"
 awk -F '\t' "$AWK_LIB"'
   $3 == "heading" && level($4) == 2 { sd = ($2 == "Spells" && $4 == "## Spell Descriptions") }
   $3 == "heading" && level($4) == 1 { sd = 0 }
@@ -161,16 +169,19 @@ awk -F '\t' "$AWK_LIB"'
   $2 == "Animals" && $3 == "heading" && level($4) == 2 { print name(substr($4, 4)) > "'"$WORK"'/md.monsters" }
   $3 == "heading" && $4 ~ /\\\[Condition\\\]$/ { print name(substr($4, level($4) + 2)) > "'"$WORK"'/md.conditions" }
 ' "$WORK/md.lines"
-md_school="$(awk -F '\t' '$2 == "Spells"' "$WORK/md.lines" | cut -f 4 | grep -cE "^_(Level [1-9] $SCHOOL|$SCHOOL Cantrip) \(" || true)"
-md_ac_mon="$(awk -F '\t' '$2 == "Monsters A-Z" || $2 == "Animals"' "$WORK/md.lines" | cut -f 4 | grep -c '^- \*\*AC\*\* ' || true)"
-md_ac_other="$(awk -F '\t' '$2 != "Monsters A-Z" && $2 != "Animals"' "$WORK/md.lines" | cut -f 4 | grep -c '^- \*\*AC\*\* ' || true)"
-md_ac_a="$(awk -F '\t' '$2 == "Monsters A-Z"' "$WORK/md.lines" | cut -f 4 | grep -c '^- \*\*AC\*\* ' || true)"
-md_ac_b="$(awk -F '\t' '$2 == "Animals"' "$WORK/md.lines" | cut -f 4 | grep -c '^- \*\*AC\*\* ' || true)"
+md_chapter() { awk -F '\t' -v c="$1" '$2 == c { print $4 }' "$WORK/md.lines"; }
+AC_MD='^- \*\*AC\*\* '
+md_school="$(md_chapter "Spells" | count "^_(Level [1-9] $SCHOOL|$SCHOOL Cantrip) \\(")"
+md_ac_a="$(md_chapter "Monsters A-Z" | count "$AC_MD")"
+md_ac_b="$(md_chapter "Animals" | count "$AC_MD")"
+md_ac_all="$(cut -f 4 "$WORK/md.lines" | count "$AC_MD")"
+md_ac_mon=$((md_ac_a + md_ac_b))
+md_ac_other=$((md_ac_all - md_ac_mon))
 # PDF side.
 pdf_pages() { awk -F '\t' -v a="$1" -v b="$2" '$1 >= a && $1 <= b { print $2 }' "$WORK/pdf.lines"; }
-pdf_school="$(pdf_pages 104 175 | grep -cE "^(Level [1-9] $SCHOOL|$SCHOOL Cantrip) \(" || true)"
-pdf_ac_mon="$(pdf_pages 258 "$pages" | grep -cE '^AC [0-9]+([[:space:]]|$)' || true)"
-pdf_ac_other="$(pdf_pages 5 257 | grep -cE '^AC [0-9]+([[:space:]]|$)' || true)"
+pdf_school="$(pdf_pages 104 175 | count "^(Level [1-9] $SCHOOL|$SCHOOL Cantrip) \\(")"
+pdf_ac_mon="$(pdf_pages 258 "$pages" | count '^AC [0-9]+([ \t]|$)')"
+pdf_ac_other="$(pdf_pages 5 257 | count '^AC [0-9]+([ \t]|$)')"
 awk -F '\t' "$AWK_LIB"'$1 >= 2 && $1 <= 4 && name($2) == "Index of Stat" { on = 1; next }
   on && $1 >= 2 && $1 <= 4 && $2 ~ /\.\.+[ \t]*[0-9]+[ \t]*$/ { l = name($2); sub(/[ .]*\.\.+ ?[0-9]+$/, "", l); sub(/\.$/, "", l); print l }' \
   "$WORK/pdf.lines" | sort > "$WORK/pdf.index"
@@ -179,29 +190,42 @@ pdf_pages 176 191 | awk "$AWK_LIB"'/\[Condition\][ \t]*$/ { print name($0) }' | 
 sort "$WORK/md.monsters" -o "$WORK/md.monsters"
 sort "$WORK/md.conditions" -o "$WORK/md.conditions"
 sort -u "$WORK/md.spells" > "$WORK/md.spells.sorted"
+comm -23 "$WORK/md.spells.sorted" "$WORK/pdf.spell-lines" > "$WORK/spells.md-only"
+comm -23 "$WORK/pdf.index" "$WORK/md.monsters" > "$WORK/monsters.pdf-only"
+comm -13 "$WORK/pdf.index" "$WORK/md.monsters" > "$WORK/monsters.md-only"
+comm -3 "$WORK/pdf.conditions" "$WORK/md.conditions" > "$WORK/conditions.diff"
+n_md_spells="$(lines "$WORK/md.spells")"; n_md_monsters="$(lines "$WORK/md.monsters")"
+n_pdf_index="$(lines "$WORK/pdf.index")"; n_md_cond="$(lines "$WORK/md.conditions")"
+n_pdf_cond="$(lines "$WORK/pdf.conditions")"
+n_spells_md_only="$(lines "$WORK/spells.md-only")"; n_mon_pdf_only="$(lines "$WORK/monsters.pdf-only")"
+n_mon_md_only="$(lines "$WORK/monsters.md-only")"; n_cond_diff="$(lines "$WORK/conditions.diff")"
 
 echo "Spells"
-echo "  Markdown: $(wc -l < "$WORK/md.spells" | tr -d ' ') headings under '## Spell Descriptions', $md_school school/level lines"
+echo "  Markdown: $n_md_spells headings under '## Spell Descriptions', $md_school school/level lines"
 echo "  PDF:      $pdf_school school/level lines (e.g. 'Level 3 Evocation (' or 'Evocation Cantrip (') on pages 104-175"
-echo "  Markdown spell names not found as a whole line on PDF pages 104-175: $(comm -23 "$WORK/md.spells.sorted" "$WORK/pdf.spell-lines" | wc -l | tr -d ' ')"
-comm -23 "$WORK/md.spells.sorted" "$WORK/pdf.spell-lines" | sed 's/^/    /'
+echo "  Markdown spell names not found as a whole line on PDF pages 104-175: $n_spells_md_only"
+sed 's/^/    /' "$WORK/spells.md-only"
 echo "Monsters (stat blocks in 'Monsters A–Z' and 'Animals')"
-echo "  Markdown: $(wc -l < "$WORK/md.monsters" | tr -d ' ') stat block headings, $md_ac_mon '- **AC**' lines ($md_ac_a in Monsters A-Z, $md_ac_b in Animals)"
-echo "  PDF:      $(wc -l < "$WORK/pdf.index" | tr -d ' ') entries in the 'Index of Stat Blocks' (pages 2-4), $pdf_ac_mon lines starting 'AC <number>' on pages 258-$pages"
-echo "  Names in the PDF index but not in the Markdown headings: $(comm -23 "$WORK/pdf.index" "$WORK/md.monsters" | wc -l | tr -d ' ')"
-comm -23 "$WORK/pdf.index" "$WORK/md.monsters" | sed 's/^/    /'
-echo "  Names in the Markdown headings but not in the PDF index: $(comm -13 "$WORK/pdf.index" "$WORK/md.monsters" | wc -l | tr -d ' ')"
-comm -13 "$WORK/pdf.index" "$WORK/md.monsters" | sed 's/^/    /'
+echo "  Markdown: $n_md_monsters stat block headings, $md_ac_mon '- **AC**' lines ($md_ac_a in Monsters A-Z, $md_ac_b in Animals)"
+echo "  PDF:      $n_pdf_index entries in the 'Index of Stat Blocks' (pages 2-4), $pdf_ac_mon lines starting 'AC <number>' on pages 258-$pages"
+echo "  Names in the PDF index but not in the Markdown headings: $n_mon_pdf_only"
+sed 's/^/    /' "$WORK/monsters.pdf-only"
+echo "  Names in the Markdown headings but not in the PDF index: $n_mon_md_only"
+sed 's/^/    /' "$WORK/monsters.md-only"
 echo "  Other stat blocks (spells, magic items, toolbox): Markdown $md_ac_other '- **AC**' lines, PDF $pdf_ac_other 'AC <number>' lines on pages 5-257"
 echo "Conditions"
-echo "  Markdown: $(wc -l < "$WORK/md.conditions" | tr -d ' ') headings ending '[Condition]'; PDF: $(wc -l < "$WORK/pdf.conditions" | tr -d ' ') lines ending '[Condition]' on pages 176-191"
-echo "  Name differences: $(comm -3 "$WORK/pdf.conditions" "$WORK/md.conditions" | wc -l | tr -d ' ')"
-if [ -d "$DEST/source/.git" ]; then
-  tree() { git -C "$DEST/source" ls-tree -r --name-only HEAD -- "$1"; }
-  echo "Cross-check with the per-file folder of the same commit (git tree only, not downloaded)"
-  echo "  dnd/521/markdown/Monsters: $(tree dnd/521/markdown/Monsters | grep -c '\.md$') files"
-  echo "  dnd/521/markdown/Spells:   $(tree dnd/521/markdown/Spells | grep -c '\.md$') .md files, of which Spells/Spells.md is the introduction"
-fi
+echo "  Markdown: $n_md_cond headings ending '[Condition]'; PDF: $n_pdf_cond lines ending '[Condition]' on pages 176-191"
+echo "  Name differences: $n_cond_diff"
+# Cross-check with the upstream per-file folder, read from the pinned commit's tree (no checkout).
+[ -d "$DEST/source/.git" ] || fail "$DEST/source not found: run scripts/srd-download.sh first"
+git -C "$DEST/source" ls-tree -r --name-only "$SRD_COMMIT" -- dnd/521/markdown/Monsters dnd/521/markdown/Spells \
+  > "$WORK/folder.tree" || fail "could not list the per-file folder at commit $SRD_COMMIT in $DEST/source: run scripts/srd-download.sh again"
+[ -s "$WORK/folder.tree" ] || fail "no dnd/521/markdown/Monsters or Spells folder at commit $SRD_COMMIT"
+folder_monsters="$(count '^dnd/521/markdown/Monsters/.*\.md$' < "$WORK/folder.tree")"
+folder_spells="$(count '^dnd/521/markdown/Spells/.*\.md$' < "$WORK/folder.tree")"
+echo "Cross-check with the per-file folder of the same commit (git tree only, not downloaded)"
+echo "  dnd/521/markdown/Monsters: $folder_monsters files"
+echo "  dnd/521/markdown/Spells:   $folder_spells .md files, of which Spells/Spells.md is the introduction"
 
 echo
 echo "== Sampled sections (word tokens, lower case, punctuation and Markdown syntax removed)"
@@ -232,8 +256,10 @@ while IFS='|' read -r label chapter heading; do
   # - Markdown tokens that cannot be found count as Markdown-only.
   range="$(CH="$chapter" awk -F '|' -v last="$pages" '{ t = $2; gsub(/–/, "-", t); s[NR] = $1; n[NR] = t }
     END { for (i = 1; i <= NR; i++) if (n[i] == ENVIRON["CH"]) print s[i], (i < NR ? s[i + 1] - 1 : last) }' "$WORK/chapters.txt")"
+  [ -n "$range" ] || fail "sample $i: chapter '$chapter' is not in the chapter list"
   : > "$s.pdf"
-  if ! awk -F '\t' -v out="$s" -v range="$range" '
+  status=0
+  awk -F '\t' -v out="$s" -v range="$range" '
     NR == FNR { m[++M] = $2; next }
     { p[++N] = $2; pg[N] = $1 }
     function at(i, from, k,   j) { for (j = 0; j < k; j++) if (p[i + j] != m[from + j]) return 0; return 1 }
@@ -269,22 +295,26 @@ while IFS='|' read -r label chapter heading; do
         else for (x = e[2]; x <= e[3]; x++) if (!used[x]) print p[x] > (out ".pdf")
       }
       printf "starts on PDF page %d; %d layout jumps\n", pg[s0], jumps > (out ".how")
-    }' "$s.mdl" "$WORK/pdf.tok"; then
-    echo "   section start not located in the PDF text"
-    continue
-  fi
+    }' "$s.mdl" "$WORK/pdf.tok" || status=$?
+  # Exit status 2 is the program's own "not located" result; any other failure is an error.
+  if [ "$status" -eq 2 ]; then echo "   section start not located in the PDF text"; continue; fi
+  [ "$status" -eq 0 ] || fail "alignment of sample $i failed (awk exit status $status)"
   touch "$s.md"
-  diff "$s.md" "$s.pdf" > "$s.diff" || true
-  echo "   $(cat "$s.how")"
-  echo "   tokens: Markdown $(wc -l < "$s.md" | tr -d ' '), aligned PDF $(wc -l < "$s.pdf" | tr -d ' ')"
-  echo "   differences: $(grep -c '^<' "$s.diff" || true) Markdown-only, $(grep -c '^>' "$s.diff" || true) PDF-only tokens"
+  # diff exits 1 when the files differ (expected) and 2 on trouble (an error).
+  diff "$s.md" "$s.pdf" > "$s.diff" || [ $? -eq 1 ] || fail "diff failed on sample $i"
+  how="$(cat "$s.how")"
+  n_md="$(lines "$s.md")"; n_pdf="$(lines "$s.pdf")"
+  n_md_only="$(count '^<' < "$s.diff")"; n_pdf_only="$(count '^>' < "$s.diff")"
+  echo "   $how"
+  echo "   tokens: Markdown $n_md, aligned PDF $n_pdf"
+  echo "   differences: $n_md_only Markdown-only, $n_pdf_only PDF-only tokens"
   echo "   difference hunks (at most 12, each side cut at 25 tokens):"
   awk '
     function cut(s,   n, w, r, k) { n = split(s, w, " "); r = ""; for (k = 1; k <= n && k <= 25; k++) r = r (k > 1 ? " " : "") w[k]; return r (n > 25 ? " ..." : "") }
-    function flush() { if (h) print "     md: [" cut(a) "]  pdf: [" cut(b) "]" }
+    function flush() { if (h && h <= 12) print "     md: [" cut(a) "]  pdf: [" cut(b) "]" }
     /^[0-9]/ { flush(); h++; a = b = ""; next }
     /^</ { a = a " " substr($0, 3) } /^>/ { b = b " " substr($0, 3) }
-    END { flush() }' "$s.diff" | head -12
+    END { flush() }' "$s.diff"
 done <<< "$SAMPLES"
 
 echo
