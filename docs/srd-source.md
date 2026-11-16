@@ -23,7 +23,9 @@ Attribution: see [`ATTRIBUTION.md`](../ATTRIBUTION.md).
   redistribute, the downloaded Markdown and the PDF are **never committed**: they live in `data/srd/`,
   which is git-ignored.
 - The downloaded repository is treated as untrusted data: the script fetches only the pinned commit,
-  with git hooks disabled, checks out only the one Markdown file, and never runs anything from it.
+  with git hooks disabled, reads the one Markdown file as a git blob (no working tree, so no
+  checkout filter or symlink is involved, and the script checks it is a regular file), and never
+  runs anything from it.
 
 ## Getting the Markdown
 
@@ -33,11 +35,16 @@ scripts/srd-download.sh
 
 Requires `git`, `awk` and `shasum` or `sha256sum`. Produces `data/srd/SRD_CC_v5.2.1.md`. The script:
 
-1. fetches the pinned commit only (`--depth 1`) and checks that the checked-out commit is the pinned
-   hash;
-2. applies the scripted cleanup below;
+1. removes any previous output, fetches the pinned commit only (`--depth 1`) and checks that the
+   fetched commit is the pinned hash;
+2. reads the file and applies the scripted cleanup below;
 3. checks that the SHA-256 of the result equals `SRD_MARKDOWN_SHA256` from `scripts/srd-source.env`,
-   so the output is byte-identical on every run; it fails otherwise.
+   so the output is byte-identical on every run. Only then is the result moved to
+   `data/srd/SRD_CC_v5.2.1.md`. On a mismatch it fails, nothing is left at that path, and the result
+   is kept as `data/srd/SRD_CC_v5.2.1.md.unverified` for review.
+
+`scripts/srd-validate.sh` also refuses a Markdown file whose SHA-256 is not the pinned one, so an
+edited or unverified file is never measured or reported under the pinned commit.
 
 ### Scripted cleanup
 
@@ -54,7 +61,8 @@ Nothing else is changed. Other differences with the PDF (below) are left as the 
 ### Changing the pin
 
 Edit `SRD_COMMIT` in `scripts/srd-source.env`, run `scripts/srd-download.sh` (it will fail on the
-checksum and print the new one), review the change, then update `SRD_MARKDOWN_SHA256`, the commit in
+checksum, print the new one and keep the result as `SRD_CC_v5.2.1.md.unverified`), review that
+file, then update `SRD_MARKDOWN_SHA256`, re-run the download, update the commit in
 `ATTRIBUTION.md`, and re-run the validation below. Any change of source is a change of the rules
 corpus and must be replayed against the eval set.
 
@@ -68,10 +76,12 @@ Requires `pdftotext`, from [poppler](https://poppler.freedesktop.org/) (free, op
 example `brew install poppler` or `apt install poppler-utils`). It is needed by this script only;
 the script stops with a clear message if it is missing. It also needs `curl`. The PDF
 (https://media.dndbeyond.com/compendium-images/srd/5.2/SRD_CC_v5.2.1.pdf) is downloaded into
-`data/srd/` and checked against `SRD_PDF_SHA256`.
+`data/srd/` and checked against `SRD_PDF_SHA256` (if an existing PDF fails the check, delete it and
+re-run). The Markdown is checked against `SRD_MARKDOWN_SHA256`.
 
 This is a **measurement**, not a test: there is no target and no pass/fail threshold on fidelity. The
-script only fails when it cannot measure (missing tool or file, wrong PDF checksum).
+script only fails when it cannot measure (missing tool or file, Markdown or PDF checksum not the
+pinned one).
 
 ### What it measures, and how
 
@@ -89,9 +99,13 @@ dropped from the PDF text.
   the Markdown has it as a top-level heading. It also reports extra top-level headings and heading
   levels that skip a level.
 - **Spells.** PDF: lines that start a spell's school line (`Level 3 Evocation (…` or
-  `Evocation Cantrip (…`) on the Spells chapter pages. Every spell has exactly one, so this is an
-  exact count, not an estimate. Markdown: headings under `## Spell Descriptions`, and the same
-  school lines. Each Markdown spell name is also looked up as a whole line of the PDF Spells pages.
+  `Evocation Cantrip (…`) on the Spells chapter pages. Markdown: headings under
+  `## Spell Descriptions`, and the same school lines. Each Markdown spell name is also looked up as
+  a whole line of the PDF Spells pages. These are pattern counts that agree with each other; the PDF
+  has no separate list of spells to count against, so they equal the number of spells only if every
+  school line starts a line in the extracted text and nothing else does. The upstream folder count
+  is not independent (same conversion). Monsters are better supported, because the PDF has its own
+  index.
 - **Monsters.** PDF: two independent counts, the entries of the "Index of Stat Blocks" (contents
   pages) and the lines starting `AC <number>` on the Monsters A–Z and Animals pages (one per stat
   block). Markdown: stat-block headings and `- **AC**` lines in the Monsters A-Z and Animals chapters.
@@ -109,17 +123,24 @@ dropped from the PDF text.
   never matched elsewhere count as PDF-only. The script prints both counts and the differing words.
 - **Whole-document overlap.** Share of 8-word sequences found on the other side, per chapter, in both
   directions, with the Markdown paragraphs below 50% and the longest PDF passages with no match.
-  This is the evidence for "nothing but SRD text" (Markdown to PDF) and "nothing missing" (PDF to
-  Markdown).
+  In the Markdown-to-PDF direction only text lines of 8 tokens or more are scored; the script
+  prints how many tokens fall in each part (scored text lines, short or blank lines, table rows,
+  headings). Table rows, short lines (every stat-block bullet, every spell component line) and
+  headings are not scored; headings are covered only partly, by the spell, monster and condition
+  name checks.
 
 ### What it does not catch
 
 - It compares words, not formatting: bold, italics, list structure and table layout are not checked;
   punctuation differences are invisible.
 - Tables are laid out differently in the PDF (side-by-side halves, rotated ability-score blocks), so
-  their words come in another order. The sampled alignment copes with simple tables, but on dense
-  pages (several stat blocks on one page) short sequences can match the wrong stat block; the
-  monster sample's remaining differences are of that kind and were checked by hand (below).
+  their words come in another order. The sampled alignment copes with simple tables, but short
+  sequences can match another stat block inside its search window (2,000 tokens around the
+  chapter's pages), so the counts for a stat-block sample are mostly noise; the monster sample was
+  checked by hand instead (below).
+- Nothing in the Markdown that is not scored (about 23% of its tokens: tables, short lines,
+  headings) is compared with the PDF in the Markdown-to-PDF direction, except the five samples and
+  the name checks. A wrong number in a table row or an invented stat-block bullet would not be seen.
 - The whole-document overlap is a coarse signal: any table, column break or sidebar breaks 8-word
   sequences, which is why the PDF-to-Markdown figures are lowest for stat-block chapters. A low
   figure says "look here", not "text is missing".
@@ -181,12 +202,23 @@ Sampled sections (Markdown words / differences):
 Goblin Warrior, checked by hand against the PDF page 290 layout: AC 15, Initiative +2 (12), HP 10
 (3d6), Speed 30 ft., Str 8/−1/−1, Dex 15/+2/+2, Con 10/+0/+0, Int 10/+0/+0, Wis 8/−1/−1,
 Cha 8/−1/−1, skills, gear, senses, languages, CR, actions and bonus action all match. The reported
-differences come from the ability scores, which the conversion rotates into one table (the PDF
-prints `Str 8 −1 −1` and so on in three columns), and from short word sequences matching the
-neighbouring goblin stat blocks printed on the same page.
+differences are alignment artefacts: the Markdown-only tokens are the ability scores, which the
+conversion rotates into one table (the PDF prints `Str 8 −1 −1` and so on in three columns), and
+the PDF-only tokens (`+8 +15 +10 +10 +8 +8`, which do not occur on page 290) come from another
+stat block inside the search window.
 
-Whole-document overlap (8-word sequences): 99.3% of the Markdown paragraph sequences are found in
-the PDF (5,499 paragraphs; 9 below 50%), and 86.2% of the PDF sequences are found in the Markdown.
+Whole-document overlap (8-word sequences). Coverage of the Markdown-to-PDF direction, as printed
+by the script:
+
+| Part of the Markdown | Lines | Tokens | Share of tokens | Scored |
+|---|---|---|---|---|
+| Text lines of 8 tokens or more | 5,499 | 183,477 | 77.2% | yes |
+| Table rows | 4,630 | 26,955 | 11.3% | no |
+| Short or blank text lines | 15,882 | 20,954 | 8.8% | no |
+| Headings | 2,963 | 6,334 | 2.7% | no |
+
+99.3% of the 8-word sequences of the scored text lines are found in the PDF (9 of the 5,499 lines
+are below 50%), and 86.2% of the PDF sequences are found in the Markdown.
 By chapter, Markdown to PDF ranges from 96.0% (Character Creation) to 100% (Legal Information,
 Feats); PDF to Markdown ranges from 53.2% (Animals) and 74.0% (Monsters A–Z), where stat-block
 layout breaks the sequences, to 100% (Feats). The contents and index pages (2–4) match 0%, as
@@ -196,18 +228,26 @@ Experience Points table, whose words come in a different order in the PDF text.
 
 ### Differences found
 
-All are conversion choices or corrections, none adds non-SRD content:
+Known deviations of the conversion from the PDF, left as converted (the cleanup changes none of
+them). Within the scored text (77.2% of the Markdown tokens), no passage from another source or
+from SRD 5.1 was found: every scored line below 50% is explained below. The unscored 22.8% (tables,
+short lines, headings) was not checked this way.
 
 - The table of contents and the Index of Stat Blocks are not in the Markdown.
 - Table captions and references to them were removed, e.g. "as detailed in the Experience Points by
   Challenge Rating table" became "as detailed in the table" (documented by the conversion: tables
-  were moved next to the text that uses them). Of the 9 Markdown paragraphs below 50%, 5 are
-  sentences of this kind ("The tables in this section show…", "using this table"), 2 are PDF
-  typos corrected by the conversion (below), and 2 are reformatted lines: the Spell Scroll costs
-  ("Spell Scroll (Cantrip, 30 GP; …" in the PDF) and the fast travel pace formula ("1⅓" written
-  "1 1/3").
-- A few PDF typos are corrected: "Component:" became "Components:" in one spell, "10foot" became
-  "10 foot". The D20 Tests steps are numbered 1–3 instead of the PDF's 4–6 (documented upstream).
+  were moved next to the text that uses them). Of the 9 scored Markdown lines below 50%, 5 are
+  sentences of this kind ("The tables in this section show…", "using this table"), 2 are the
+  conversion differences below ("Components:", "10 foot"), and 2 are reformatted lines: the Spell
+  Scroll costs ("Spell Scroll (Cantrip, 30 GP; …" in the PDF) and the fast travel pace formula
+  ("1⅓" written "1 1/3").
+- "Component:" is written "Components:". 12 lines of the PDF text start with `Component:` (not
+  tied to the number of components: one is `Component: V, S, M (…)`); the Markdown has 0 `**Component:**` and 339 `**Components:**`. Only one
+  of the 12 shows in the overlap check: the others are lines under 8 tokens, which are not scored.
+- "10-foot" is written "10 foot" in 4 places. The PDF prints "10-foot" with the hyphen at a line
+  break (`10-` / `foot`); the conversion lost the hyphen. (pdftotext also drops it and gives
+  "10foot", which is why the overlap check flags the line.)
+- The D20 Tests steps are numbered 1–3 instead of the PDF's 4–6 (documented upstream).
 - Monster ability scores are one Markdown table per stat block instead of the PDF's three blocks.
 - In the Legal Information chapter, the licence URL is split as `…/by/4.0/ legalcode` (a space from
   the PDF line break). `ATTRIBUTION.md` has the correct URL; the Markdown is left as converted.

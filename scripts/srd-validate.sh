@@ -4,7 +4,7 @@
 # Usage: scripts/srd-validate.sh   (run scripts/srd-download.sh first)
 # Requires: pdftotext (from poppler, needed by this script only), curl, awk, diff, comm, sort,
 # shasum or sha256sum. Downloads the PDF to data/srd/ (git-ignored) if it is not there yet.
-# Exits non-zero only when it cannot measure (missing tool or file, wrong PDF checksum).
+# Exits non-zero only when it cannot measure (missing tool or file, Markdown or PDF checksum not the pinned one).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -54,13 +54,15 @@ sha256() {
 command -v pdftotext > /dev/null 2>&1 || fail "pdftotext not found. It is part of poppler: install poppler with your package manager (for example 'brew install poppler' or 'apt install poppler-utils') and re-run."
 command -v curl > /dev/null 2>&1 || fail "curl not found"
 [ -f "$MD" ] || fail "$MD not found: run scripts/srd-download.sh first"
+md_digest="$(sha256 "$MD")"
+[ "$md_digest" = "$SRD_MARKDOWN_SHA256" ] || fail "SHA-256 of $MD is $md_digest, expected $SRD_MARKDOWN_SHA256: it is not the pinned output. Run scripts/srd-download.sh again."
 
 if [ ! -f "$PDF" ]; then
   curl -fsSL -o "$PDF.tmp" "$SRD_PDF_URL" || fail "could not download $SRD_PDF_URL"
   mv "$PDF.tmp" "$PDF"
 fi
 digest="$(sha256 "$PDF")"
-[ "$digest" = "$SRD_PDF_SHA256" ] || fail "SHA-256 of $PDF is $digest, expected $SRD_PDF_SHA256"
+[ "$digest" = "$SRD_PDF_SHA256" ] || fail "SHA-256 of $PDF is $digest, expected $SRD_PDF_SHA256. Delete $PDF and re-run to download it again."
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
@@ -107,7 +109,7 @@ awk -v OFS='\t' '
   { kind = /^#+ / ? "heading" : (/^\|/ ? "table" : "text"); print NR, ch, kind, $0 }' "$MD" > "$WORK/md.lines"
 
 echo "SRD 5.2.1 Markdown vs official PDF (measurement only, no threshold)"
-echo "Markdown: $MD ($(wc -l < "$MD" | tr -d ' ') lines), commit $SRD_COMMIT"
+echo "Markdown: $MD ($(wc -l < "$MD" | tr -d ' ') lines, SHA-256 matches the pin), output of commit $SRD_COMMIT"
 echo "PDF:      $PDF ($pages pages with text, SHA-256 matches the pin), text extracted with $(pdftotext -v 2>&1 | head -1)"
 
 echo
@@ -297,6 +299,9 @@ awk -F '\t' "$AWK_LIB"'
     for (i = 1; i + 7 <= nm; i++) inmd[gram(Mt, i)] = 1
     # Markdown text paragraphs (not headings, not tables) with at least 8 tokens.
     for (l = 1; l <= nl; l++) {
+      cat = (lkind[l] == "text") ? (lcount[l] < 8 ? "short or blank text lines (not scored)" : "text lines of 8+ tokens (scored)") : (lkind[l] == "table" ? "table rows (not scored)" : "headings (not scored)")
+      if (!(cat in clines)) cord[++ncat] = cat
+      clines[cat]++; ctok[cat] += lcount[l]; alltok += lcount[l]
       if (lkind[l] != "text" || lcount[l] < 8) continue
       c = lch[l]; if (!(c in seen)) { seen[c] = 1; chs[++nc] = c }
       tot = found = 0
@@ -304,7 +309,11 @@ awk -F '\t' "$AWK_LIB"'
       T[c] += tot; F[c] += found; para[c]++
       if (found / tot < 0.5) { low[c]++; nlow++; if (nlow <= 15) ex[nlow] = sprintf("line %d (%d%%): %s", l, 100 * found / tot, substr(ltext[l], 1, 110)) }
     }
-    print "Markdown -> PDF: share of the 8-word sequences of each Markdown paragraph found in the PDF text"
+    print "Markdown -> PDF coverage: which Markdown tokens this check scores (tokens as in the samples)"
+    printf "  %-40s %8s %9s %s\n", "part of the Markdown", "lines", "tokens", "share of tokens"
+    for (j = 1; j <= ncat; j++) { c = cord[j]; printf "  %-40s %8d %9d %6.1f%%\n", c, clines[c], ctok[c], 100 * ctok[c] / alltok }
+    printf "  %-40s %8d %9d\n", "all lines (blank lines have 0 tokens)", nl, alltok
+    print "Markdown -> PDF: share of the 8-word sequences of each scored Markdown paragraph found in the PDF text"
     printf "  %-20s %10s %10s %s\n", "Markdown chapter", "paragraphs", "found", "paragraphs under 50%"
     for (j = 1; j <= nc; j++) { c = chs[j]; printf "  %-20s %10d %9.1f%% %d\n", c, para[c], 100 * F[c] / T[c], low[c]; TT += T[c]; FF += F[c]; PP += para[c] }
     printf "  %-20s %10d %9.1f%% %d\n", "all", PP, 100 * FF / TT, nlow
