@@ -61,6 +61,30 @@ func TestURLFromEnv(t *testing.T) {
 	}
 }
 
+// Open checks the URL before connecting: none of these reach a server.
+func TestOpenRefusesIncompleteURL(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "empty authority", url: "postgres://"},
+		{name: "missing port", url: "postgres://db.example/grimoire"},
+		{name: "missing database", url: "postgres://db.example:5433"},
+		{name: "unix socket", url: "postgres:///grimoire?host=/tmp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn, err := db.Open(context.Background(), tt.url)
+			if conn != nil {
+				conn.Close()
+			}
+			if !errors.Is(err, db.ErrIncompleteURL) {
+				t.Fatalf("err = %v, want %v", err, db.ErrIncompleteURL)
+			}
+		})
+	}
+}
+
 func TestMigrate(t *testing.T) {
 	conn := dbtest.Open(t)
 	dbtest.Reset(t, conn)

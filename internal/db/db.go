@@ -78,7 +78,12 @@ func checkLocation(raw string) error {
 }
 
 // Open connects to the database at url and checks it is reachable.
+// It refuses, without connecting, a url that does not state host, port and
+// database explicitly (see URLFromEnv).
 func Open(ctx context.Context, url string) (*sql.DB, error) {
+	if err := checkLocation(url); err != nil {
+		return nil, err
+	}
 	conn, err := sql.Open("pgx", url)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
