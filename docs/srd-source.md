@@ -64,7 +64,9 @@ Edit `SRD_COMMIT` in `scripts/srd-source.env`, run `scripts/srd-download.sh` (it
 checksum, print the new one and keep the result as `SRD_CC_v5.2.1.md.unverified`), review that
 file, then update `SRD_MARKDOWN_SHA256`, re-run the download, update the commit in
 `ATTRIBUTION.md`, and re-run the validation below. Any change of source is a change of the rules
-corpus and must be replayed against the eval set.
+corpus and must be replayed against the eval set. The download accepts the file only if it is a
+regular, non-executable file at the new commit (git mode `100644`); a symlink, an executable file or
+a missing path makes it fail.
 
 ## Validation against the official PDF
 
