@@ -246,7 +246,9 @@ scripts, its own doc and the attribution file).
 | Build | `api` | PR opened; scripts run end to end | 213k |
 | Acceptance | `product` | 5 of 6 criteria met (documentation not in the README) | 55k |
 | Review 1 | `reviewer` | Not ready: 1 blocking, 4 "should fix", 6 "nice to have" | 136k |
-| Fix 1 | `api` | In progress | |
+| Fix 1 | `api` | One commit; blocking finding and doc claims corrected | 260k cumulative |
+| Review 2 | `reviewer` | No blocking finding; one regression introduced by the fix | 170k cumulative |
+| Fix 2 | `api` | One commit; regression fixed, eight swallowed failures removed | 296k cumulative |
 
 - The author deviated from the brief: it used the upstream single-file Markdown (PDF chapters as
   top-level headings) instead of the per-entity folder. Better citation paths, but it invalidates
@@ -259,6 +261,15 @@ scripts, its own doc and the attribution file).
   and the spell count has no independent list in the PDF.
 - Blocking finding: a failed hash check left the mismatched file in place, and the validator did
   not check the hash of what it validated.
+
+- Regression in the fix commit: a cross-check command started failing, printed zeros and the
+  script still exited 0, while the docs and the author's report kept the old figures ("every count
+  unchanged"). The author had not read its own output. Asked to look for the same pattern
+  elsewhere, it found eight more places where a failing command would have become a silent zero.
+- After two review rounds, the orchestrator verified the last commit itself by running both
+  scripts from a clean state: both exit 0, no error line, cross-check prints 330 and 340, entity
+  counts 339 / 330 / 15 on both sides.
+- Still open on this PR: the README link (after #13 is merged) and the rewrite of #5.
 
 #### Observations for the article
 
@@ -277,3 +288,6 @@ scripts, its own doc and the attribution file).
   parallel agents do not mix well; do them between waves.
 - The acceptance check by `product` cannot run code; it relies on the PR and the reviewer. Running
   it after the review, not in parallel, would give it better evidence.
+- "Unchanged" is a claim, not a result. The one inaccurate report of the wave came from an agent
+  summarising a re-run it had not read. Asking for the exact lines as printed, rather than a
+  summary, is cheap and would have caught it.
