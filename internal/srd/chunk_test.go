@@ -29,6 +29,12 @@ _**Using a Higher-Level Spell Slot.**_ The damage increases by 1d6 for each spel
 // "Spell Level" sits at the split level but not under "Spell Descriptions".
 const spellRulesFixture = `# Spells
 
+## Spell Descriptions
+
+### Light
+
+_Evocation Cantrip (Bard, Cleric, Sorcerer, Wizard)_
+
 ## Casting Spells
 
 ### Spell Level
@@ -144,11 +150,23 @@ A coin weighs about a third of an ounce, so fifty coins weigh a pound.
 
 ## Tools
 
+### Artisan's Tools
+
+#### Smith's Tools
+
+**Ability:** Strength
+
 ### Other Tools
 
 #### Thieves' Tools
 
 **Ability:** Dexterity
+
+## Adventuring Gear
+
+### Rope
+
+Rope has 2 HP and can be burst with a DC 20 Strength (Athletics) check.
 `
 
 const classFixture = `# Classes
@@ -181,6 +199,14 @@ const originsFixture = `# Character Origins
 - **Speed:** 30 feet
 `
 
+// Not SRD text: the condition tag on a heading outside the Rules Glossary.
+const conditionElsewhereFixture = `# Playing the Game
+
+## Foo \[Condition\]
+
+Text.
+`
+
 const legalFixture = `# Legal Information
 
 The System Reference Document 5.2.1 ("SRD 5.2.1") is provided to you free of charge.
@@ -205,6 +231,10 @@ func TestSplit(t *testing.T) {
 				"_**Using a Higher-Level Spell Slot.**_ The damage increases by 1d6 for each spell slot level above 3.",
 		}}},
 		{name: "rules section of an entity chapter is a rule", input: spellRulesFixture, want: []want{{
+			id: "spells/light", kind: "spell", title: "Light",
+			path: "Spells > Light", fullPath: "Spells > Spell Descriptions > Light",
+			text: "_Evocation Cantrip (Bard, Cleric, Sorcerer, Wizard)_",
+		}, {
 			id: "spells/casting-spells/spell-level", kind: "rule", title: "Spell Level",
 			path: "Spells > Casting Spells > Spell Level", fullPath: "Spells > Casting Spells > Spell Level",
 			text: "Every spell has a level from 0 to 9.\n\n#### Spell Slots\n\nSpellcasting is taxing.",
@@ -283,11 +313,27 @@ func TestSplit(t *testing.T) {
 					"| Coin                | Value in GP   |\n|---------------------|---------------|\n| Copper Piece (CP)   | 1/100         |",
 			},
 			{
+				id: "equipment/tools/artisans-tools/smiths-tools", kind: "equipment", title: "Smith's Tools",
+				path:     "Equipment > Tools > Artisan's Tools > Smith's Tools",
+				fullPath: "Equipment > Tools > Artisan's Tools > Smith's Tools",
+				text:     "**Ability:** Strength",
+			},
+			{
 				id: "equipment/tools/thieves-tools", kind: "equipment", title: "Thieves' Tools",
 				path: "Equipment > Tools > Thieves' Tools", fullPath: "Equipment > Tools > Other Tools > Thieves' Tools",
 				text: "**Ability:** Dexterity",
 			},
+			{
+				id: "equipment/adventuring-gear/rope", kind: "equipment", title: "Rope",
+				path: "Equipment > Adventuring Gear > Rope", fullPath: "Equipment > Adventuring Gear > Rope",
+				text: "Rope has 2 HP and can be burst with a DC 20 Strength (Athletics) check.",
+			},
 		}},
+		{name: "condition tag outside the Rules Glossary is kept as written", input: conditionElsewhereFixture, want: []want{{
+			id: "playing-the-game/foo-condition", kind: "rule", title: "Foo [Condition]",
+			path: "Playing the Game > Foo [Condition]", fullPath: `Playing the Game > Foo \[Condition\]`,
+			text: "Text.",
+		}}},
 		{name: "class section", input: classFixture, want: []want{{
 			id: "classes/barbarian/core-barbarian-traits", kind: "class", title: "Core Barbarian Traits",
 			path: "Classes > Barbarian > Core Barbarian Traits", fullPath: "Classes > Barbarian > Core Barbarian Traits",
@@ -367,6 +413,24 @@ func TestSplitErrors(t *testing.T) {
 			mentions: []string{"line 1"},
 		},
 		{
+			name:     "renamed entity parent",
+			input:    "# Spells\n\n## Spell Description List\n\n### Fireball\n\nText.\n",
+			wantErr:  ErrUnmatchedPattern,
+			mentions: []string{`chapter "Spells"`, `h3 under "Spells > Spell Descriptions"`},
+		},
+		{
+			name:     "renamed entity parent among others",
+			input:    strings.Replace(tableFixture, "### Other Tools", "### Misc Tools", 1),
+			wantErr:  ErrUnmatchedPattern,
+			mentions: []string{`chapter "Equipment"`, `h4 under "Equipment > Tools > Other Tools"`},
+		},
+		{
+			name:     "entity at an unexpected level",
+			input:    "# Animals\n\n### Wolf\n\nText.\n",
+			wantErr:  ErrUnmatchedPattern,
+			mentions: []string{`chapter "Animals"`, `h2 under "Animals"`},
+		},
+		{
 			name:     "heading with no letter or digit",
 			input:    "# Spells\n\n## Spell Descriptions\n\n### …\n\nText.\n",
 			wantErr:  ErrEmptySlug,
@@ -444,7 +508,7 @@ func TestParseHeading(t *testing.T) {
 		rawEnd string
 	}{
 		{line: "# Spells", ok: true, level: 1, title: "Spells"},
-		{line: `### Prone \[Condition\]`, ok: true, level: 3, title: "Prone", rawEnd: `\[Condition\]`},
+		{line: `### Prone \[Condition\]`, ok: true, level: 3, title: "Prone [Condition]", rawEnd: `\[Condition\]`},
 		{line: `### Hide \[Action\]`, ok: true, level: 3, title: "Hide [Action]"},
 		{line: "#### Alert", ok: true, level: 4, title: "Alert"},
 		{line: "#Spells", ok: false},
@@ -457,6 +521,22 @@ func TestParseHeading(t *testing.T) {
 		if ok != tt.ok || h.level != tt.level || h.title != tt.title || !strings.HasSuffix(h.raw, tt.rawEnd) {
 			t.Errorf("parseHeading(%q) = %+v, %v", tt.line, h, ok)
 		}
+	}
+}
+
+// TestUnmatchedContainer uses a test-only table entry: in the real table,
+// every container is matched whenever the entity rule beside it is.
+func TestUnmatchedContainer(t *testing.T) {
+	saved := chapters["Monsters"]
+	t.Cleanup(func() { chapters["Monsters"] = saved })
+	chapters["Monsters"] = chapter{Split: 3, Kind: KindRule, Containers: [][]string{{"Stat Block Index"}}}
+
+	_, err := Split(strings.NewReader("# Monsters\n\n## Stat Block Overview\n\nText.\n"))
+	if !errors.Is(err, ErrUnmatchedPattern) {
+		t.Fatalf("err = %v, want %v", err, ErrUnmatchedPattern)
+	}
+	if want := `container "Monsters > Stat Block Index"`; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q does not mention %s", err, want)
 	}
 }
 

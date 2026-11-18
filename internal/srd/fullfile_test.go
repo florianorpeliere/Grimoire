@@ -40,22 +40,70 @@ func TestFullFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Split: %v", err)
 	}
+	// Every kind is counted, so that an entity heading renamed, moved or at
+	// an unexpected level cannot silently become (part of) a rule chunk.
+	// spell, monster and condition are the scripts/srd-validate.sh counts;
+	// the others are those printed by "ingest srd -dry-run" on this file.
+	if got, want := len(chunks), 1508; got != want {
+		t.Errorf("chunks = %d, want %d", got, want)
+	}
 	perKind := map[Kind]int{}
 	for _, c := range chunks {
 		perKind[c.Kind]++
 	}
-	for _, tt := range []struct {
-		kind Kind
-		want int
-	}{
-		{KindSpell, 339},
-		{KindMonster, 330},
-		{KindCondition, 15},
-	} {
-		if got := perKind[tt.kind]; got != tt.want {
-			t.Errorf("%s chunks = %d, want %d (scripts/srd-validate.sh)", tt.kind, got, tt.want)
+	wantPerKind := map[Kind]int{
+		KindBackground: 4,
+		KindClass:      59,
+		KindCondition:  15,
+		KindEquipment:  106,
+		KindFeat:       17,
+		KindGlossary:   140,
+		KindLegal:      1,
+		KindMagicItem:  258,
+		KindMonster:    330,
+		KindRule:       230,
+		KindSpecies:    9,
+		KindSpell:      339,
+	}
+	for kind := range perKind {
+		if _, ok := wantPerKind[kind]; !ok {
+			t.Errorf("unexpected kind %q (%d chunks)", kind, perKind[kind])
 		}
 	}
+	for kind, want := range wantPerKind {
+		if got := perKind[kind]; got != want {
+			t.Errorf("%s chunks = %d, want %d", kind, got, want)
+		}
+	}
+
+	// The citation examples required by the story, on the real file.
+	byID := map[string]Chunk{}
+	for _, c := range chunks {
+		byID[c.ID] = c
+	}
+	examples := []struct {
+		id   string
+		kind Kind
+		path string
+	}{
+		{"spells/fireball", KindSpell, "Spells > Fireball"},
+		{"rules-glossary/prone", KindCondition, "Rules Glossary > Prone"},
+		{"monsters-a-z/goblin-warrior", KindMonster, "Monsters A-Z > Goblin Warrior"},
+		{"animals/wolf", KindMonster, "Animals > Wolf"},
+		{"playing-the-game/actions/reactions", KindRule, "Playing the Game > Actions > Reactions"},
+		{"classes/barbarian/core-barbarian-traits", KindClass, "Classes > Barbarian > Core Barbarian Traits"},
+	}
+	for _, ex := range examples {
+		c, ok := byID[ex.id]
+		if !ok {
+			t.Errorf("no chunk with id %q", ex.id)
+			continue
+		}
+		if c.Kind != ex.kind || c.PathString() != ex.path {
+			t.Errorf("%s: kind %q, path %q; want %q, %q", ex.id, c.Kind, c.PathString(), ex.kind, ex.path)
+		}
+	}
+
 	checkCoverage(t, string(data), chunks)
 }
 

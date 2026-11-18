@@ -13,8 +13,12 @@ The split table is in [`internal/srd/table.go`](../internal/srd/table.go); this 
   block, the features of a class section), lists and tables stay inside it.
 - Text above the split level (a chapter introduction, an h2's text before its first h3) is a chunk
   of its own, attached to its heading. A heading with no text of its own produces no chunk.
+- Headings are ATX headings only: 1 to 6 `#` at column 0, then one space, then the title (no tab,
+  no indent, no closing `#`, no setext underline). Any other line is text. The pinned file has
+  only this form.
 - A chapter (h1) title that is not in the table is an error. Text before the first chapter is an
-  error.
+  error. An entity rule or a container of a chapter present in the file that matches no heading
+  of that chapter (e.g. a heading renamed in a new pin) is an error naming the chapter and pattern.
 - Chunks are not split further: the dry run lists any chunk above 4,000 estimated tokens.
 
 ## Split table
@@ -40,7 +44,8 @@ The split table is in [`internal/srd/table.go`](../internal/srd/table.go); this 
 
 Every chunk that is not an entity has the kind `rule` (`legal` in Legal Information). A Rules
 Glossary entry whose heading ends with the `\[Condition\]` tag has the kind `condition`; the tag is
-kept out of its title and short path. Other glossary tags (`[Action]`, `[Hazard]`,
+kept out of its title and short path. Outside the Rules Glossary entries, the tag has no effect and
+is kept as written. Other glossary tags (`[Action]`, `[Hazard]`,
 `[Area of Effect]`, `[Attitude]`) are kept, unescaped.
 
 ## Paths and ids

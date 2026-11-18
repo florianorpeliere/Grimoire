@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -42,6 +43,10 @@ var (
 	ErrTextBeforeChapter = errors.New("text before the first chapter heading")
 	// ErrEmptySlug is returned when a path segment has no letter or digit.
 	ErrEmptySlug = errors.New("heading gives an empty id segment")
+	// ErrUnmatchedPattern is returned when an entity or container pattern of
+	// the split table matches no heading of its chapter, e.g. after a heading
+	// was renamed in a new pin of the source.
+	ErrUnmatchedPattern = errors.New("split table pattern matches no heading")
 )
 
 // Chunk is one passage of the SRD.
@@ -66,15 +71,15 @@ func (c Chunk) PathString() string { return strings.Join(c.Path, " > ") }
 // up. It is not a tokenizer count.
 func (c Chunk) EstimateTokens() int { return (utf8.RuneCountInString(c.Text) + 3) / 4 }
 
-// conditionTag marks a Rules Glossary entry that is a condition. The source
-// escapes the brackets.
+// conditionTag marks a Rules Glossary entry that is a condition (only in a
+// chapter whose table entry sets Conditions). The source escapes the brackets.
 const conditionTag = `\[Condition\]`
 
 // heading is one heading of the source.
 type heading struct {
 	level int
 	raw   string // text after the "#" marks, as written
-	title string // raw without condition tag and Markdown escapes
+	title string // raw without Markdown escapes (and without the condition tag, for a condition)
 }
 
 // ReadFile splits the SRD Markdown file at path.
@@ -93,7 +98,7 @@ func ReadFile(path string) ([]Chunk, error) {
 
 // Split reads the SRD Markdown and returns its chunks in document order.
 func Split(r io.Reader) ([]Chunk, error) {
-	s := splitter{seen: map[string][]string{}}
+	s := splitter{seen: map[string][]string{}, used: map[string]bool{}}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	n := 0
@@ -109,7 +114,35 @@ func Split(r io.Reader) ([]Chunk, error) {
 	if err := s.flush(); err != nil {
 		return nil, err
 	}
+	if err := s.checkPatterns(); err != nil {
+		return nil, err
+	}
 	return s.chunks, nil
+}
+
+// checkPatterns fails when an entity rule or a container of a chapter found in
+// the input matched no heading of that chapter.
+func (s *splitter) checkPatterns() error {
+	for _, title := range s.chapterTitles {
+		ch := chapters[title]
+		for i, r := range ch.Entities {
+			if !s.used[patternKey(title, "entity", i)] {
+				return fmt.Errorf("%w: chapter %q, entity rule (h%d under %q)", ErrUnmatchedPattern,
+					title, r.level(), strings.Join(append([]string{title}, r.Under...), " > "))
+			}
+		}
+		for i, c := range ch.Containers {
+			if !s.used[patternKey(title, "container", i)] {
+				return fmt.Errorf("%w: chapter %q, container %q", ErrUnmatchedPattern,
+					title, strings.Join(append([]string{title}, c...), " > "))
+			}
+		}
+	}
+	return nil
+}
+
+func patternKey(chapter, what string, i int) string {
+	return fmt.Sprintf("%s\x00%s\x00%d", chapter, what, i)
 }
 
 type splitter struct {
@@ -118,6 +151,10 @@ type splitter struct {
 	stack   [7]*heading         // open headings by level (1-6)
 	chapter chapter
 	cur     *open // chunk being read, nil before the first chapter
+
+	chapterTitle  string          // title of the current chapter
+	chapterTitles []string        // chapters seen, in order, without repeats
+	used          map[string]bool // patternKey of the table patterns that matched a heading
 }
 
 // open is a chunk whose text is still being read.
@@ -152,13 +189,27 @@ func (s *splitter) line(n int, text string) error {
 			return fmt.Errorf("line %d: %w: %q", n, ErrUnknownChapter, h.title)
 		}
 		s.chapter = ch
+		if !slices.Contains(s.chapterTitles, h.title) {
+			s.chapterTitles = append(s.chapterTitles, h.title)
+		}
+		s.chapterTitle = h.title
 	}
 	s.stack[h.level] = &h
 	for l := h.level + 1; l < len(s.stack); l++ {
 		s.stack[l] = nil
 	}
+	for i, c := range s.chapter.Containers {
+		if len(c) == h.level-1 && s.matches(c) {
+			s.used[patternKey(s.chapterTitle, "container", i)] = true
+		}
+	}
 
 	kind, entity := s.entityKind(h.level)
+	if entity && s.chapter.Conditions && strings.HasSuffix(h.raw, conditionTag) {
+		// The tag is kept out of the title, hence out of the short path.
+		h.title = unescape(strings.TrimSpace(strings.TrimSuffix(h.raw, conditionTag)))
+		kind = KindCondition
+	}
 	if !entity && h.level > s.chapter.Split {
 		// A deeper heading stays inside the current chunk.
 		s.cur.lines = append(s.cur.lines, text)
@@ -170,9 +221,6 @@ func (s *splitter) line(n int, text string) error {
 	if !entity {
 		kind = s.chapter.Kind
 	}
-	if strings.HasSuffix(h.raw, conditionTag) {
-		kind = KindCondition
-	}
 	s.cur = &open{head: &h, kind: kind, path: s.shortPath(h.level), fullPath: s.fullPath(h.level), startLine: n}
 	return nil
 }
@@ -180,8 +228,9 @@ func (s *splitter) line(n int, text string) error {
 // entityKind reports whether the heading at level, now on top of the stack,
 // is an entity heading of the current chapter, and its kind.
 func (s *splitter) entityKind(level int) (Kind, bool) {
-	for _, r := range s.chapter.Entities {
+	for i, r := range s.chapter.Entities {
 		if r.level() == level && s.matches(r.Under) {
+			s.used[patternKey(s.chapterTitle, "entity", i)] = true
 			return r.Kind, true
 		}
 	}
@@ -282,8 +331,7 @@ func parseHeading(line string) (heading, bool) {
 		return heading{}, false
 	}
 	raw := strings.TrimSpace(line[level:])
-	title := strings.TrimSpace(strings.TrimSuffix(raw, conditionTag))
-	return heading{level: level, raw: raw, title: unescape(title)}, true
+	return heading{level: level, raw: raw, title: unescape(raw)}, true
 }
 
 // unescape removes Markdown backslash escapes before ASCII punctuation.

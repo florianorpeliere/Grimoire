@@ -52,10 +52,15 @@ type chapter struct {
 	Kind       Kind // kind of the chunks that are not entities
 	Entities   []entityRule
 	Containers [][]string
+	// Conditions makes the entities whose heading ends with the condition tag
+	// chunks of kind KindCondition. Elsewhere the tag is kept as written.
+	Conditions bool
 }
 
 // chapters is the split table, keyed on the chapter (h1) title. A chapter
-// title that is not in the table makes the chunker fail.
+// title that is not in the table makes the chunker fail, and so does an
+// entity rule or a container of a chapter in the input that matches no
+// heading of that chapter (e.g. a heading renamed in a new pin).
 //
 // Heading counts measured on the pinned SRD file are given for reference.
 var chapters = map[string]chapter{
@@ -108,6 +113,7 @@ var chapters = map[string]chapter{
 	"Rules Glossary": {Split: 3, Kind: KindRule,
 		Entities:   []entityRule{{Under: []string{"Rules Definitions"}, Kind: KindGlossary}},
 		Containers: [][]string{{"Rules Definitions"}},
+		Conditions: true,
 	},
 	// 258 magic items, h3 under "Magic Items A-Z".
 	"Magic Items": {Split: 3, Kind: KindRule,
