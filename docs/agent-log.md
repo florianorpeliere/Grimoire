@@ -200,3 +200,94 @@ Observation for the article: PR #11 was merged by Florian while the orchestrator
 working on its branch. The orchestrator noticed only because the remote `main` hash did not
 match its expectation just before a push. Checking remote state before any
 destructive git operation is not optional when a human and an agent share a repository.
+
+### 2026-11-15 and 2026-11-16 — Wave 1: issues #3 and #4
+
+Florian merged the rules PR and moved #3 and #4 to Ready. Preflight by the orchestrator: local
+PostgreSQL reachable, embedding model present; `pdftotext` was missing for #4's validation and was
+installed by the orchestrator (agents never install software).
+
+Two `api` agents ran in parallel, each in its own git worktree, with a file ownership split written
+into their briefs to avoid merge conflicts (#3 owns the Go module, README, Makefile; #4 only shell
+scripts, its own doc and the attribution file).
+
+#### #3 Go skeleton — PR #13
+
+| Step | Agent | Outcome | Tokens (harness) |
+|---|---|---|---|
+| Build | `api` | Code written and tested, then blocked at commit (see below) | 57k |
+| Resume | `api` | Commit, push, PR opened | 63k cumulative |
+| Review 1 | `reviewer` | No blocking finding, 2 "should fix", 7 "nice to have" | 64k |
+| Fix 1 | `api` | One commit | 98k cumulative |
+| Acceptance | `product` | 7 of 7 criteria met | 42k |
+| Review 2 | `reviewer` | Ready to merge; 2 one-line hardening suggestions, stale PR description | 97k cumulative |
+| Final touches | `api` | One commit (33 lines), description updated | 110k cumulative |
+
+- Blocked: commit signing was required by the developer's git settings and cannot prompt in an
+  agent's non-interactive shell. The agent stopped and reported instead of bypassing it. Florian
+  decided commits in this repository are unsigned.
+- The orchestrator escalated two "should fix" findings to must-fix, because both could lead to
+  statements on a database other than the project's: an `.env.example` placeholder that broke
+  shell sourcing and let the driver fall back to its defaults, and a test reset helper that was
+  safe only by convention.
+- The author claimed, from reading the driver's source, that the URL wins over `PG*` environment
+  variables. The reviewer was asked to prove it by running, and did.
+- The reviewer bypassed the first version of the reset guard with a planted function and a custom
+  search path; fixed by qualifying the call with `pg_catalog`.
+- The last commit was read and tested by the orchestrator, not by the reviewer (two rounds max).
+- Deferred, to raise with Florian: setup errors that look like skipped tests, migration locking,
+  database tests across packages, the Down migration.
+- Not verified by anyone: the README on a clean install.
+
+#### #4 SRD Markdown — PR #14
+
+| Step | Agent | Outcome | Tokens (harness) |
+|---|---|---|---|
+| Build | `api` | PR opened; scripts run end to end | 213k |
+| Acceptance | `product` | 5 of 6 criteria met (documentation not in the README) | 55k |
+| Review 1 | `reviewer` | Not ready: 1 blocking, 4 "should fix", 6 "nice to have" | 136k |
+| Fix 1 | `api` | One commit; blocking finding and doc claims corrected | 260k cumulative |
+| Review 2 | `reviewer` | No blocking finding; one regression introduced by the fix | 170k cumulative |
+| Fix 2 | `api` | One commit; regression fixed, eight swallowed failures removed | 296k cumulative |
+
+- The author deviated from the brief: it used the upstream single-file Markdown (PDF chapters as
+  top-level headings) instead of the per-entity folder. Better citation paths, but it invalidates
+  the chunking rule of #5, which was written for the folder. The reviewer supplied the heading
+  counts per chapter; the decision is Florian's.
+- Reported validation: 339 spells, 330 monster stat blocks, 15 conditions, 14 chapters on both
+  sides; 99.3% of the Markdown's 8-word sequences found in the PDF. The reviewer reproduced every
+  number, then showed which claims were stronger than the method: the overlap check scores about
+  77% of the tokens, two "PDF typos fixed by the conversion" were in fact conversion differences,
+  and the spell count has no independent list in the PDF.
+- Blocking finding: a failed hash check left the mismatched file in place, and the validator did
+  not check the hash of what it validated.
+
+- Regression in the fix commit: a cross-check command started failing, printed zeros and the
+  script still exited 0, while the docs and the author's report kept the old figures ("every count
+  unchanged"). The author had not read its own output. Asked to look for the same pattern
+  elsewhere, it found eight more places where a failing command would have become a silent zero.
+- After two review rounds, the orchestrator verified the last commit itself by running both
+  scripts from a clean state: both exit 0, no error line, cross-check prints 330 and 340, entity
+  counts 339 / 330 / 15 on both sides.
+- Still open on this PR: the README link (after #13 is merged) and the rewrite of #5.
+
+#### Observations for the article
+
+- Parallel agents hit a usage limit mid-wave; two of them stopped and were resumed later with
+  their context intact. Up to three agents were running at once.
+- The reviewer earned its cost on both PRs by running things: it reproduced a path to the wrong
+  database, broke a guard, and found that a "verified" corpus could be validated after tampering.
+  None of these were visible in the authors' reports, which were accurate about what they had run.
+- Authors were reliable about facts and optimistic about interpretation ("PDF typo", "no text
+  from another source"). Asking the reviewer to judge whether a number is presented more
+  confidently than its method supports was the most useful line in the brief.
+- An agent that deviates from its brief for a good reason still creates work: one deviation in #4
+  forces a rewrite of #5. The brief should have said which choices were load-bearing for later issues.
+- `main` was rewritten twice during the wave for repository hygiene, while agents held branches on
+  the old history. Each agent had to be told to re-base before committing. History rewrites and
+  parallel agents do not mix well; do them between waves.
+- The acceptance check by `product` cannot run code; it relies on the PR and the reviewer. Running
+  it after the review, not in parallel, would give it better evidence.
+- "Unchanged" is a claim, not a result. The one inaccurate report of the wave came from an agent
+  summarising a re-run it had not read. Asking for the exact lines as printed, rather than a
+  summary, is cheap and would have caught it.
