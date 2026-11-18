@@ -25,7 +25,7 @@ You are the orchestrator of Grimoire. Read CLAUDE.md, then run: $ARGUMENTS
 6. Summary. Present to Florian: PRs opened, test and eval results, reviewer verdicts, open questions.
    Stop. Florian merges; the board moves the card to Done when the issue closes.
 
-Keep `docs/agent-log.md` up to date at every phase: what each agent did, reviewer round trips,
+Keep `notes/agent-log.md` (local only, ignored by git, never committed or quoted in PRs) up to date at every phase: what each agent did, reviewer round trips,
 what blocked, and token usage when the harness reports it.
 
 Never skip the two stops (the merge stop happens once per wave). Never work on an issue that is not in the Ready column.

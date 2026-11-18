@@ -32,8 +32,8 @@ Out of scope for V1 (do not build, flag it if a task drifts there):
 
 ## Public repository
 
-This repository is public. Everything pushed to it, including issues, PR descriptions, comments
-and `docs/agent-log.md`, can be read by anyone and stays in the history.
+This repository is public. Everything pushed to it, including issues, PR descriptions and comments,
+can be read by anyone and stays in the history.
 
 Never commit or post:
 - Secrets of any kind: API keys, tokens, passwords, connection strings with credentials, `.env`
