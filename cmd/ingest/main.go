@@ -2,7 +2,8 @@
 //
 // Usage:
 //
-//	ingest migrate    apply pending schema migrations to the database at DATABASE_URL
+//	ingest migrate              apply pending schema migrations to the database at DATABASE_URL
+//	ingest srd -dry-run [file]  split the SRD Markdown into chunks and print a report, without the database
 //
 // Migrations are never applied implicitly: run "ingest migrate" explicitly.
 package main
@@ -22,7 +23,9 @@ import (
 const usage = `usage: ingest <command>
 
 commands:
-  migrate   apply pending schema migrations to the database at DATABASE_URL
+  migrate               apply pending schema migrations to the database at DATABASE_URL
+  srd -dry-run [file]   split the SRD Markdown (default data/srd/SRD_CC_v5.2.1.md) into
+                        chunks and print a report; does not touch the database
 `
 
 // errUsage marks command-line mistakes, reported with exit code 2.
@@ -51,6 +54,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 			return fmt.Errorf("%w: migrate takes no arguments", errUsage)
 		}
 		return migrate(ctx, getenv, stdout)
+	case "srd":
+		return srdCommand(args[1:], stdout)
 	default:
 		return fmt.Errorf("%w: unknown command %q", errUsage, args[0])
 	}
