@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# Local notes, never published (the orchestrator's agent log lives here)
+/notes/
+
 # Downloaded third-party content (never redistributed from this repository)
 /data/
 
