@@ -91,7 +91,8 @@ Use `go test -v ./...` to see which tests were skipped and why.
 ## Layout
 
 ```
-cmd/ingest/        database migrations (ingestion commands come next)
+cmd/ingest/        database migrations, SRD chunking dry run
 internal/db/       connection and embedded migrations
+internal/srd/      SRD Markdown split into chunks (see docs/srd-chunking.md)
 internal/dbtest/   helpers for integration tests
 ```

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/florianorpeliere/grimoire/internal/db"
@@ -21,6 +22,10 @@ func TestRunErrors(t *testing.T) {
 		{name: "unknown command", args: []string{"serve"}, wantErr: errUsage},
 		{name: "migrate with extra argument", args: []string{"migrate", "down"}, wantErr: errUsage},
 		{name: "migrate without DATABASE_URL", args: []string{"migrate"}, env: map[string]string{}, wantErr: db.ErrNoURL},
+		{name: "srd without -dry-run", args: []string{"srd"}, wantErr: errUsage},
+		{name: "srd with an unknown flag", args: []string{"srd", "-store"}, wantErr: errUsage},
+		{name: "srd with two files", args: []string{"srd", "-dry-run", "a.md", "b.md"}, wantErr: errUsage},
+		{name: "srd with a missing file", args: []string{"srd", "-dry-run", "missing.md"}, wantErr: os.ErrNotExist},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
