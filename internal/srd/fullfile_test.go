@@ -132,6 +132,7 @@ func TestFixturesAreSRDText(t *testing.T) {
 	slices.Sort(tests)
 	for _, name := range tests {
 		t.Run(name, func(t *testing.T) {
+			// This proves each line exists in the file, not that it sits under the right heading.
 			for i, l := range strings.Split(srdFixtures[name], "\n") {
 				if strings.TrimSpace(l) != "" && !lines[l] {
 					t.Errorf("fixture line %d is not a line of %s: %q", i+1, DefaultPath, l)

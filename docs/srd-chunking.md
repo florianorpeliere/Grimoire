@@ -94,8 +94,9 @@ the new dry run, which would only repeat what the chunker does:
 3. `background`, `class`, `equipment`, `feat`, `glossary`, `magic-item` and `species` are **not**
    validated by the script. Count their entity headings in the Markdown file directly (for
    example with `grep` on the heading level and parent heading given in the split table above),
-   and check the dry run against that count. A difference must be explained, e.g. a heading with no
-   text of its own, which produces no chunk.
+   and check the dry run against that count. For `glossary`, count the h3 under Rules Definitions
+   minus those ending `\[Condition\]`, which are `condition` chunks. A difference must be
+   explained, e.g. a heading with no text of its own, which produces no chunk.
 4. `rule` and `legal` have no content marker. Compare the chunk lists of the dry run before and
    after the pin change, and check each added, removed or renamed id against the source.
 5. Only then update the counts in `TestFullFile`, the counts in the comments of

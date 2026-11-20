@@ -390,6 +390,7 @@ func TestSplitErrors(t *testing.T) {
 		input    string
 		wantErr  error
 		mentions []string // the error message must name these
+		parts    int      // for a joined error, its number of parts, each wrapping wantErr
 	}{
 		{
 			name:     "unknown chapter",
@@ -433,6 +434,7 @@ func TestSplitErrors(t *testing.T) {
 			input: strings.NewReplacer("### Artisan's Tools", "### Crafting Tools",
 				"### Other Tools", "### Misc Tools").Replace(tableFixture),
 			wantErr: ErrUnmatchedPattern,
+			parts:   3,
 			mentions: []string{
 				`h4 under "Equipment > Tools > Artisan's Tools"`,
 				`h4 under "Equipment > Tools > Other Tools"`,
@@ -457,6 +459,21 @@ func TestSplitErrors(t *testing.T) {
 			_, err := Split(strings.NewReader(tt.input))
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			if tt.parts > 0 {
+				joined, ok := err.(interface{ Unwrap() []error })
+				if !ok {
+					t.Fatalf("err = %v, want a joined error", err)
+				}
+				parts := joined.Unwrap()
+				if len(parts) != tt.parts {
+					t.Errorf("joined error has %d parts, want %d", len(parts), tt.parts)
+				}
+				for i, p := range parts {
+					if !errors.Is(p, tt.wantErr) {
+						t.Errorf("part %d (%v) does not wrap %v", i, p, tt.wantErr)
+					}
+				}
 			}
 			for _, m := range tt.mentions {
 				if !strings.Contains(err.Error(), m) {

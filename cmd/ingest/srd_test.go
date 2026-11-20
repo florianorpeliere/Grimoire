@@ -46,6 +46,7 @@ func TestDryRunFixtureIsSRDText(t *testing.T) {
 	for _, l := range strings.Split(string(data), "\n") {
 		lines[l] = true
 	}
+	// This proves each line exists in the file, not that it sits under the right heading.
 	for i, l := range strings.Split(dryRunFixture, "\n") {
 		if strings.TrimSpace(l) != "" && !lines[l] {
 			t.Errorf("fixture line %d is not a line of %s: %q", i+1, srd.DefaultPath, l)
