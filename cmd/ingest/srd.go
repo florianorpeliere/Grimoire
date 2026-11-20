@@ -32,6 +32,8 @@ func srdCommand(ctx context.Context, args []string, getenv func(string) string, 
 	fs := flag.NewFlagSet("srd", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	dryRun := fs.Bool("dry-run", false, "print the chunk report without touching the database")
+	allowLargeDelete := fs.Bool("allow-large-delete", false,
+		fmt.Sprintf("let the run delete more than %g%% of the stored chunks", srd.MaxDeleteShare*100))
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("%w: srd: %v", errUsage, err)
 	}
@@ -41,6 +43,9 @@ func srdCommand(ctx context.Context, args []string, getenv func(string) string, 
 	path := srd.DefaultPath
 	if fs.NArg() == 1 {
 		path = fs.Arg(0)
+	}
+	if *dryRun && *allowLargeDelete {
+		return fmt.Errorf("%w: srd: -allow-large-delete has no effect with -dry-run", errUsage)
 	}
 	if *dryRun {
 		chunks, err := srd.ReadFile(path)
@@ -66,15 +71,18 @@ func srdCommand(ctx context.Context, args []string, getenv func(string) string, 
 		return err
 	}
 	defer conn.Close()
-	return storeChunks(ctx, conn, path, chunks, stdout)
+	return storeChunks(ctx, conn, path, chunks, srd.StoreOptions{AllowLargeDelete: *allowLargeDelete}, stdout)
 }
 
 // storeChunks stores chunks and prints what changed and the rows stored.
-func storeChunks(ctx context.Context, conn *sql.DB, path string, chunks []srd.Chunk, stdout io.Writer) error {
-	res, err := srd.Store(ctx, conn, srd.Version, chunks)
+func storeChunks(ctx context.Context, conn *sql.DB, path string, chunks []srd.Chunk, opts srd.StoreOptions, stdout io.Writer) error {
+	res, err := srd.Store(ctx, conn, srd.Version, chunks, opts)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == codeUndefinedTable {
 		return fmt.Errorf("%w (run \"ingest migrate\" first)", err)
+	}
+	if errors.Is(err, srd.ErrLargeDelete) {
+		return fmt.Errorf("%w (check the file; pass -allow-large-delete if the deletions are intended)", err)
 	}
 	if err != nil {
 		return err

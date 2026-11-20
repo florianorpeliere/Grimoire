@@ -88,6 +88,9 @@ make srd           # store the chunks in the database at DATABASE_URL
 `make srd` upserts the chunks into the `srd_chunks` table by id and deletes the stored chunks
 that are no longer in the file, so running it again on the same file changes nothing. It prints
 how many chunks were inserted, updated, unchanged and deleted, and the number of rows stored.
+A run that would delete more than 5% of the stored chunks (a truncated or wrong file) changes
+nothing and fails; if the deletions are intended, run
+`go run ./cmd/ingest srd -allow-large-delete [file]`.
 The table has a full-text index over each chunk's title, short citation path and text, used by
 the keyword search in `internal/search`.
 

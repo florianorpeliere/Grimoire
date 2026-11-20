@@ -14,7 +14,24 @@ var (
 	ErrNoChunks = errors.New("no chunks to store")
 	// ErrNoVersion is returned by Store when the SRD version is blank.
 	ErrNoVersion = errors.New("SRD version is blank")
+	// ErrLargeDelete is returned by Store, which then changes nothing, when
+	// the input would delete more than MaxDeleteShare of the stored rows and
+	// StoreOptions.AllowLargeDelete is not set.
+	ErrLargeDelete = errors.New("too many stored chunks would be deleted")
 )
+
+// MaxDeleteShare is the share of the stored rows Store deletes without
+// StoreOptions.AllowLargeDelete. Above it the input is more likely a
+// truncated or wrong file than a new SRD release, and the deleted rows would
+// have to be embedded again.
+const MaxDeleteShare = 0.05
+
+// StoreOptions changes what Store accepts.
+type StoreOptions struct {
+	// AllowLargeDelete lets Store delete more than MaxDeleteShare of the
+	// stored rows, e.g. for a new SRD release that drops many sections.
+	AllowLargeDelete bool
+}
 
 // StoreResult counts what Store did, per chunk of the input and per row deleted.
 type StoreResult struct {
@@ -54,8 +71,10 @@ const deleteMissing = `DELETE FROM srd_chunks WHERE id <> ALL($1)`
 // in chunks, in one transaction. Running it twice on the same input changes
 // nothing the second time. The short citation path is stored as PathString.
 //
-// It refuses an empty input or duplicate ids before touching the database.
-func Store(ctx context.Context, conn *sql.DB, version string, chunks []Chunk) (StoreResult, error) {
+// It refuses an empty input or duplicate ids before touching the database,
+// and rolls back, with ErrLargeDelete, a run that would delete more than
+// MaxDeleteShare of the stored rows unless opts.AllowLargeDelete is set.
+func Store(ctx context.Context, conn *sql.DB, version string, chunks []Chunk, opts StoreOptions) (StoreResult, error) {
 	var res StoreResult
 	if strings.TrimSpace(version) == "" {
 		return StoreResult{}, ErrNoVersion
@@ -78,6 +97,11 @@ func Store(ctx context.Context, conn *sql.DB, version string, chunks []Chunk) (S
 		return StoreResult{}, fmt.Errorf("store chunks: %w", err)
 	}
 	defer tx.Rollback() // no-op after Commit
+
+	var stored int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM srd_chunks").Scan(&stored); err != nil {
+		return StoreResult{}, fmt.Errorf("store chunks: %w", err)
+	}
 
 	stmt, err := tx.PrepareContext(ctx, upsertChunk)
 	if err != nil {
@@ -109,6 +133,10 @@ func Store(ctx context.Context, conn *sql.DB, version string, chunks []Chunk) (S
 		return StoreResult{}, fmt.Errorf("delete removed chunks: %w", err)
 	}
 	res.Deleted = int(deleted)
+	if !opts.AllowLargeDelete && float64(res.Deleted) > MaxDeleteShare*float64(stored) {
+		return StoreResult{}, fmt.Errorf("%w: %d of %d (more than %g%%); nothing was changed",
+			ErrLargeDelete, res.Deleted, stored, MaxDeleteShare*100)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return StoreResult{}, fmt.Errorf("store chunks: %w", err)

@@ -62,7 +62,7 @@ func TestKeyword(t *testing.T) {
 	for i := range fixtures {
 		fixtures[i].Hash = "hash " + fixtures[i].ID
 	}
-	if _, err := srd.Store(ctx, conn, srd.Version, fixtures); err != nil {
+	if _, err := srd.Store(ctx, conn, srd.Version, fixtures, srd.StoreOptions{}); err != nil {
 		t.Fatalf("Store: %v", err)
 	}
 
@@ -79,6 +79,8 @@ func TestKeyword(t *testing.T) {
 		{name: "exact condition name", query: "Grappled", wantFirst: "rules-glossary.grappled", notInText: "grappled"},
 		{name: "name in lower case", query: "grappled", wantFirst: "rules-glossary.grappled", notInText: "grappled"},
 		{name: "exact spell name, punctuated", query: "fireball?", wantFirst: "spells.fireball", notInText: "fireball"},
+		{name: "spell name in a question", query: "What is Fireball?", wantFirst: "spells.fireball", notInText: "fireball"},
+		{name: "spell name after a stop word", query: "the fireball", wantFirst: "spells.fireball", notInText: "fireball"},
 		{name: "longer spell name", query: "Delayed Blast Fireball", wantFirst: "spells.delayed-blast-fireball", notInText: "fireball"},
 		{name: "name in a question", query: "What happens when I am Grappled?", wantFirst: "rules-glossary.grappled", notInText: "grappled"},
 		{name: "word only in the short path", query: "toolbox", wantFirst: "gameplay-toolbox.traps.collapsing-roof", notInText: "toolbox"},
@@ -109,15 +111,24 @@ func TestKeyword(t *testing.T) {
 			if hasWord(got[0].Text, tt.notInText) {
 				t.Errorf("fixture text of %q contains %q: the test does not show what it claims", got[0].ID, tt.notInText)
 			}
-			// No fixture title is shared, so only the first result can be
-			// placed ahead of its rank by an exact title match.
-			for i := 2; i < len(got); i++ {
+			for i := 1; i < len(got); i++ {
 				if got[i].Rank > got[i-1].Rank {
 					t.Errorf("results not ranked: %q (%g) after %q (%g)", got[i].ID, got[i].Rank, got[i-1].ID, got[i-1].Rank)
 				}
 			}
 		})
 	}
+
+	t.Run("query at the cap", func(t *testing.T) {
+		q := "Grappled " + strings.Repeat("x", search.MaxQueryBytes-len("Grappled "))
+		got, err := search.Keyword(ctx, conn, q, 10)
+		if err != nil {
+			t.Fatalf("Keyword: %v", err)
+		}
+		if len(got) == 0 || got[0].ID != "rules-glossary.grappled" {
+			t.Errorf("results %v, want rules-glossary.grappled first", ids(got))
+		}
+	})
 
 	t.Run("result fields", func(t *testing.T) {
 		got, err := search.Keyword(ctx, conn, "Fireball", 1)
@@ -135,11 +146,25 @@ func TestKeyword(t *testing.T) {
 	})
 }
 
-func TestKeywordBadLimit(t *testing.T) {
-	for _, limit := range []int{0, -1} {
-		if _, err := search.Keyword(context.Background(), nil, "Fireball", limit); !errors.Is(err, search.ErrBadLimit) {
-			t.Errorf("limit %d: err = %v, want %v", limit, err, search.ErrBadLimit)
-		}
+// These cases are refused before the database is used: conn is nil.
+func TestKeywordRefuses(t *testing.T) {
+	tests := []struct {
+		name    string
+		query   string
+		limit   int
+		wantErr error
+	}{
+		{name: "zero limit", query: "Fireball", limit: 0, wantErr: search.ErrBadLimit},
+		{name: "negative limit", query: "Fireball", limit: -1, wantErr: search.ErrBadLimit},
+		{name: "one byte over the cap", query: strings.Repeat("a", search.MaxQueryBytes+1), limit: 10, wantErr: search.ErrQueryTooLong},
+		{name: "many words", query: strings.Repeat("fireball ", 20000), limit: 10, wantErr: search.ErrQueryTooLong},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := search.Keyword(context.Background(), nil, tt.query, tt.limit); !errors.Is(err, tt.wantErr) {
+				t.Errorf("err = %v, want %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 

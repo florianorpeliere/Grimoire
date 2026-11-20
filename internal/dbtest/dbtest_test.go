@@ -241,6 +241,32 @@ func TestResetWaitsForLock(t *testing.T) {
 	}
 }
 
+// A second Reset while this test holds the lock fails at once instead of
+// waiting for itself.
+func TestResetTwiceFails(t *testing.T) {
+	conn := Open(t)
+	Reset(t, conn)
+
+	r := &recorder{}
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		defer close(done)
+		Reset(r, conn)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("second Reset is still waiting after 10 s")
+	}
+	if !strings.Contains(r.failed, "Reset was already called") {
+		t.Errorf("failure message = %q, want it to say Reset was already called", r.failed)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("second Reset took %v, want it to fail at once", elapsed)
+	}
+}
+
 func ptr(s string) *string { return &s }
 
 // setenv sets key to *v for the test, or unsets it when v is nil.

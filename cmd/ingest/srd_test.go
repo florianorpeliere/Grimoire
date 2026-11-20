@@ -94,6 +94,12 @@ func TestSRDStore(t *testing.T) {
 	if err := os.WriteFile(path, []byte(dryRunFixture), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The fixture without its "Casting Spells" section: one chunk of two.
+	partial := filepath.Join(t.TempDir(), "partial.md")
+	cut := strings.Index(dryRunFixture, "## Casting Spells")
+	if err := os.WriteFile(partial, []byte(dryRunFixture[:cut]), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	env := map[string]string{"DATABASE_URL": strings.TrimSpace(os.Getenv(dbtest.EnvURL))}
 	getenv := func(k string) string { return env[k] }
 
@@ -119,6 +125,16 @@ func TestSRDStore(t *testing.T) {
 			name:    "second run: nothing re-inserted",
 			args:    []string{"srd", path},
 			wantOut: []string{"chunks: 2\n", "inserted 0, updated 0, unchanged 2, deleted 0\n", "rows stored: 2\n"},
+		},
+		{
+			name:    "partial file: refused, the flag is named",
+			args:    []string{"srd", partial},
+			wantErr: "1 of 2 (more than 5%); nothing was changed (check the file; pass -allow-large-delete",
+		},
+		{
+			name:    "partial file with -allow-large-delete: the removed chunk is deleted",
+			args:    []string{"srd", "-allow-large-delete", partial},
+			wantOut: []string{"chunks: 1\n", "inserted 0, updated 0, unchanged 1, deleted 1\n", "rows stored: 1\n"},
 		},
 	}
 	for _, s := range steps {

@@ -18,13 +18,26 @@ type Result struct {
 	Rank float64 // full-text relevance; only comparable within one search
 }
 
-// ErrBadLimit is returned for a limit below 1.
-var ErrBadLimit = errors.New("limit must be at least 1")
+// MaxQueryBytes is the longest query Keyword accepts, in bytes. It bounds the
+// number of words, and the query time grows faster than linearly with it
+// (measured on the full SRD: about 0.1 s for 1,000 distinct words and 14.6 s
+// for 20,000, against 3 ms for 166 distinct words filling 1,000 bytes). 1,000 bytes is
+// about 150 English words, far more than a rules question. Longer queries are
+// refused rather than truncated, so a caller never searches on a silently
+// shortened question.
+const MaxQueryBytes = 1000
+
+var (
+	// ErrBadLimit is returned for a limit below 1.
+	ErrBadLimit = errors.New("limit must be at least 1")
+	// ErrQueryTooLong is returned for a query longer than MaxQueryBytes.
+	ErrQueryTooLong = fmt.Errorf("query is longer than %d bytes", MaxQueryBytes)
+)
 
 // Rank weights of the keyword index labels (see the srd_chunks migration),
 // in the order ts_rank expects them: {D, C, B, A}. D is unused.
 //
-//   - A, the title: 1.0, so an exact spell or condition name comes first.
+//   - A, the title: 1.0, so a spell or condition named in the query comes first.
 //   - B, the short citation path: 0.2, the same as the text. Chapter names
 //     such as "Spells" are in the path of hundreds of chunks, so a higher
 //     weight would let them crowd out text matches. This is a default to
@@ -42,9 +55,11 @@ const rankWeights = "{0.1, 0.2, 0.2, 1.0}"
 // chunks by how many words match and where. English stop words ("the", "can")
 // are dropped, including from the title and path lookup.
 //
-// A chunk whose title is the whole query (same words, any case or
-// punctuation) comes first: "Fireball" and "Delayed Blast Fireball" match
-// the title equally and get the same rank, and neither text says "Fireball".
+// Equal ranks are ordered by the number of distinct words in the title,
+// fewest first, then by id: "Fireball" and "Delayed Blast Fireball" match
+// the title equally and get the same rank (neither text says "Fireball"), and
+// the chunk whose title the query covers best comes first, also when the name
+// is inside a question ("What is Fireball?").
 const keywordQuery = `
 WITH words AS (
 	SELECT plainto_tsquery('simple', w) || plainto_tsquery('english', w) AS q
@@ -56,16 +71,19 @@ WITH words AS (
 SELECT c.id, c.path, c.kind, c.text, ts_rank('` + rankWeights + `', c.search, query.q) AS rank
 FROM srd_chunks c, query
 WHERE c.search @@ query.q
-ORDER BY to_tsvector('simple', c.title) = to_tsvector('simple', $1) DESC, rank DESC, c.id
+ORDER BY rank DESC, length(to_tsvector('simple', c.title)), c.id
 LIMIT $2`
 
 // Keyword returns at most limit SRD chunks matching the words of query, best
-// first: a chunk whose title is exactly the query, then by full-text rank,
-// then by id. A query with no searchable word (empty, or only stop words)
-// returns no result.
+// first: by full-text rank, then shortest title, then id. A query with no
+// searchable word (empty, or only stop words) returns no result. A query
+// longer than MaxQueryBytes is refused with ErrQueryTooLong.
 func Keyword(ctx context.Context, conn *sql.DB, query string, limit int) ([]Result, error) {
 	if limit < 1 {
 		return nil, ErrBadLimit
+	}
+	if len(query) > MaxQueryBytes {
+		return nil, ErrQueryTooLong
 	}
 	if strings.TrimSpace(query) == "" {
 		return nil, nil

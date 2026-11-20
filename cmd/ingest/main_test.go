@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/florianorpeliere/grimoire/internal/db"
+	"github.com/florianorpeliere/grimoire/internal/srd"
 )
 
 // These cases never reach a database: they fail before connecting.
@@ -26,6 +29,7 @@ func TestRunErrors(t *testing.T) {
 		{name: "srd with an incomplete DATABASE_URL", args: []string{"srd", "missing.md"}, env: map[string]string{"DATABASE_URL": "postgres://db.example/grimoire"}, wantErr: db.ErrIncompleteURL},
 		{name: "srd with two files, storing", args: []string{"srd", "a.md", "b.md"}, wantErr: errUsage},
 		{name: "srd storing a missing file", args: []string{"srd", "missing.md"}, env: map[string]string{"DATABASE_URL": "postgres://127.0.0.1:1/grimoire_test?sslmode=disable"}, wantErr: os.ErrNotExist},
+		{name: "srd -dry-run with -allow-large-delete", args: []string{"srd", "-dry-run", "-allow-large-delete"}, wantErr: errUsage},
 		{name: "srd with an unknown flag", args: []string{"srd", "-store"}, wantErr: errUsage},
 		{name: "srd with two files", args: []string{"srd", "-dry-run", "a.md", "b.md"}, wantErr: errUsage},
 		{name: "srd with a missing file", args: []string{"srd", "-dry-run", "missing.md"}, wantErr: os.ErrNotExist},
@@ -38,5 +42,13 @@ func TestRunErrors(t *testing.T) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// The usage text states the delete limit, which lives in internal/srd.
+func TestUsageStatesDeleteShare(t *testing.T) {
+	want := fmt.Sprintf("more than %g%% of the stored chunks", srd.MaxDeleteShare*100)
+	if !strings.Contains(usage, want) {
+		t.Errorf("usage does not contain %q:\n%s", want, usage)
 	}
 }
