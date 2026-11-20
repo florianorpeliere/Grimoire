@@ -88,11 +88,12 @@ func connect(ctx context.Context, raw string) (*sql.DB, error) {
 }
 
 // connectCase names why a connection failed, from the server's SQLSTATE.
-// Without one, the server was not reached.
+// Without one, the connection failed before the server refused it: the
+// server is unreachable, or e.g. the TLS negotiation failed.
 func connectCase(err error) string {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
-		return "server unreachable"
+		return "cannot connect"
 	}
 	switch pgErr.Code {
 	case codeInvalidCatalogName:

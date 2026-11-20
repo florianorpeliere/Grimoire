@@ -57,6 +57,11 @@ and adapt `DATABASE_URL`.
    (port 5432) and could connect to another instance. In the examples below, replace `USER`
    with your PostgreSQL role.
 
+   The tests never read `DATABASE_URL`: integration tests read `TEST_DATABASE_URL`, which
+   `.env.example` leaves commented out, so loading `.env` does not turn them on. To enable
+   them, uncomment it in `.env` or set it for one run (see [Build and test](#build-and-test)).
+   It follows the same rules and must point at `grimoire_test`.
+
 ## Migrations
 
 Migrations live in `internal/db/migrations` and are applied with [goose](https://github.com/pressly/goose),

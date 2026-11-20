@@ -69,13 +69,13 @@ func TestOpen(t *testing.T) {
 			// Port 1 is reserved and nothing listens there: the connection is refused at once.
 			name:     "unreachable",
 			testURL:  ptr("postgres://127.0.0.1:1/grimoire_test?sslmode=disable&connect_timeout=2"),
-			wantFail: "TEST_DATABASE_URL: server unreachable",
+			wantFail: "TEST_DATABASE_URL: cannot connect",
 		},
 		{
 			name:     "unreachable, DATABASE_URL set",
 			testURL:  ptr("postgres://127.0.0.1:1/grimoire_test?sslmode=disable&connect_timeout=2"),
 			appURL:   "postgres://dev@127.0.0.1:1/grimoire?sslmode=disable",
-			wantFail: "TEST_DATABASE_URL: server unreachable",
+			wantFail: "TEST_DATABASE_URL: cannot connect",
 		},
 	}
 	for _, tt := range tests {
@@ -108,7 +108,7 @@ func TestConnectCase(t *testing.T) {
 		err  error
 		want string
 	}{
-		{name: "no server error", err: fmt.Errorf("reach database: %w", context.DeadlineExceeded), want: "server unreachable"},
+		{name: "no server error", err: fmt.Errorf("reach database: %w", context.DeadlineExceeded), want: "cannot connect"},
 		{name: "missing database", err: wrapPg("3D000"), want: "database does not exist"},
 		{name: "unknown role", err: wrapPg("28000"), want: "authentication failed"},
 		{name: "wrong password", err: wrapPg("28P01"), want: "authentication failed"},
