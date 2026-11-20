@@ -19,8 +19,8 @@ const EnvURL = "DATABASE_URL"
 var (
 	// ErrNoURL is returned when DATABASE_URL is unset or blank.
 	ErrNoURL = errors.New(EnvURL + " is not set")
-	// ErrIncompleteURL is returned when DATABASE_URL does not state where to connect.
-	ErrIncompleteURL = errors.New(EnvURL + " must be a postgres:// URL with an explicit host, port and database name")
+	// ErrIncompleteURL is returned when a connection string does not state where to connect.
+	ErrIncompleteURL = errors.New("the connection string must be a postgres:// URL with an explicit host, port and database name")
 )
 
 // locationParams are query parameters that would override the host, port or
@@ -40,15 +40,16 @@ func URLFromEnv(getenv func(string) string) (string, error) {
 	if raw == "" {
 		return "", ErrNoURL
 	}
-	if err := checkLocation(raw); err != nil {
-		return "", err
+	if err := CheckURL(raw); err != nil {
+		return "", fmt.Errorf("%s: %w", EnvURL, err)
 	}
 	return raw, nil
 }
 
-// checkLocation reports whether raw states host, port and database itself.
+// CheckURL reports whether raw states host, port and database itself, with
+// an error wrapping ErrIncompleteURL otherwise. It does not connect.
 // Its errors never echo the URL, which may contain a password.
-func checkLocation(raw string) error {
+func CheckURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("%w: it cannot be parsed as a URL", ErrIncompleteURL)
@@ -81,7 +82,7 @@ func checkLocation(raw string) error {
 // It refuses, without connecting, a url that does not state host, port and
 // database explicitly (see URLFromEnv).
 func Open(ctx context.Context, url string) (*sql.DB, error) {
-	if err := checkLocation(url); err != nil {
+	if err := CheckURL(url); err != nil {
 		return nil, err
 	}
 	conn, err := sql.Open("pgx", url)

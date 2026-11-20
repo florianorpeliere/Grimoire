@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/florianorpeliere/grimoire/internal/db"
@@ -53,6 +54,9 @@ func TestURLFromEnv(t *testing.T) {
 			got, err := db.URLFromEnv(func(k string) string { return tt.env[k] })
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), db.EnvURL) {
+				t.Errorf("error %q does not name %s", err, db.EnvURL)
 			}
 			if got != tt.want {
 				t.Errorf("url = %q, want %q", got, tt.want)
