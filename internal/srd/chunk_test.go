@@ -9,8 +9,12 @@ import (
 )
 
 // The fixtures below are short excerpts of the SRD 5.2.1 in the form of the
-// single Markdown file, some sentences cut. The SRD 5.2.1 is by Wizards of
+// pinned single Markdown file, except conditionElsewhereFixture, which is
+// marked "Not SRD text". In an excerpt every line is a whole line of that
+// file, as written; some lines are left out. The SRD 5.2.1 is by Wizards of
 // the Coast LLC, licensed under CC-BY-4.0: see ATTRIBUTION.md.
+// TestFixturesAreSRDText checks the excerpts (srdFixtures) against the file.
+// The inline inputs of the error tests are not SRD text.
 
 const spellFixture = `# Spells
 
@@ -39,11 +43,11 @@ _Evocation Cantrip (Bard, Cleric, Sorcerer, Wizard)_
 
 ### Spell Level
 
-Every spell has a level from 0 to 9.
+Every spell has a level from 0 to 9, which is indicated in a spell's description. A spell's level is an indicator of how powerful it is. Cantrips — simple spells that can be cast almost by rote — are level 0. The rules for each spellcasting class say when its members gain access to spells of certain levels.
 
 #### Spell Slots
 
-Spellcasting is taxing.
+Spellcasting is taxing, so a spellcaster can cast only a limited number of level 1+ spells before resting. Spell slots are the main way a spellcaster's magical potential is represented. Each spellcasting class gives its members a limited number of spell slots of certain spell levels. For example, a level 3 Wizard has four level 1 spell slots and two level 2 slots.
 `
 
 const monsterFixture = `# Monsters A-Z
@@ -58,7 +62,7 @@ _Small Fey (Goblinoid), Chaotic Neutral_
 
 #### Actions
 
-_**Scimitar.**_ _Melee Attack Roll:_ +4, reach 5 ft.
+_**Scimitar.**_ _Melee Attack Roll:_ +4, reach 5 ft. _Hit:_ 5 (1d6 + 2) Slashing damage, plus 2 (1d4) Slashing damage if the attack roll had Advantage.
 
 #### Bonus Actions
 
@@ -75,7 +79,7 @@ _Medium Beast, Unaligned_
 
 ### Traits
 
-_**Pack Tactics.**_ The wolf has Advantage on attack rolls.
+_**Pack Tactics.**_ The wolf has Advantage on attack rolls against a creature if at least one of the wolf's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition.
 `
 
 const conditionFixture = `# Rules Glossary
@@ -88,14 +92,14 @@ While you have the Prone condition, you experience the following effects.
 
 ### Ready \[Action\]
 
-You take the Ready action to wait for a particular circumstance before you act.
+You take the Ready action to wait for a particular circumstance before you act. To do so, you take this action on your turn, which lets you act by taking a Reaction before the start of your next turn.
 `
 
 const featFixture = `# Feats
 
 ## Feat Descriptions
 
-The feats that follow are organized by category.
+The feats that follow are organized by category — Origin, General, Fighting Style, or Epic Boon — and alphabetized in each category.
 
 ### Origin Feats
 
@@ -110,26 +114,26 @@ const rulesFixture = `# Playing the Game
 
 ## D20 Tests
 
-When the outcome of an action is uncertain, the game uses a d20 roll to determine success or failure.
+When the outcome of an action is uncertain, the game uses a d20 roll to determine success or failure. These rolls are called D20 Tests, and they come in three kinds: ability checks, saving throws, and attack rolls. They follow these steps:
 
 ### Ability Checks
 
-An ability check represents a creature using talent and training.
+An ability check represents a creature using talent and training to try to overcome a challenge, such as forcing open a stuck door, picking a lock, entertaining a crowd, or deciphering a cipher. The GM and the rules often call for an ability check when a creature attempts something other than an attack that has a chance of meaningful failure. When the outcome is uncertain and narratively interesting, the dice determine the result.
 
 #### Ability Modifier
 
-An ability check is named for the ability modifier it uses.
+An ability check is named for the ability modifier it uses: a Strength check, an Intelligence check, and so on. Different ability checks are called for in different situations, depending on which ability is most relevant. See the table for examples of each check's use.
 
 ## Actions
 
 ### Reactions
 
-Certain special abilities, spells, and situations allow you to take a special action called a Reaction.
+Certain special abilities, spells, and situations allow you to take a special action called a Reaction. A Reaction is an instant response to a trigger of some kind, which can occur on your turn or on someone else's. The Opportunity Attack, described later in "Playing the Game," is the most common type of Reaction.
 `
 
 const chapterIntroFixture = `# Magic Items
 
-Magic items are gleaned from the hoards of felled monsters.
+Magic items are gleaned from the hoards of felled monsters or discovered in long-lost vaults. Such items grant capabilities a character could rarely have otherwise, or they complement their owner's capabilities in wondrous ways.
 
 ## Magic Items A-Z
 
@@ -154,19 +158,19 @@ A coin weighs about a third of an ounce, so fifty coins weigh a pound.
 
 #### Smith's Tools
 
-**Ability:** Strength
+- **Ability:** Strength
 
 ### Other Tools
 
 #### Thieves' Tools
 
-**Ability:** Dexterity
+- **Ability:** Dexterity
 
 ## Adventuring Gear
 
 ### Rope
 
-Rope has 2 HP and can be burst with a DC 20 Strength (Athletics) check.
+As a Utilize action, you can tie a knot with Rope if you succeed on a DC 10 Dexterity (Sleight of Hand) check. The Rope can be burst with a successful DC 20 Strength (Athletics) check.
 `
 
 const classFixture = `# Classes
@@ -175,9 +179,9 @@ const classFixture = `# Classes
 
 ### Core Barbarian Traits
 
-| Primary Ability            | Strength                |
-|----------------------------|-------------------------|
-| Hit Point Die              | D12 per Barbarian level |
+| Primary Ability            | Strength                                                                             |
+|----------------------------|--------------------------------------------------------------------------------------|
+| Hit Point Die              | D12 per Barbarian level                                                              |
 `
 
 const originsFixture = `# Character Origins
@@ -209,7 +213,7 @@ Text.
 
 const legalFixture = `# Legal Information
 
-The System Reference Document 5.2.1 ("SRD 5.2.1") is provided to you free of charge.
+The System Reference Document 5.2.1 ("SRD 5.2.1") is provided to you free of charge by Wizards of the Coast LLC ("Wizards") under the terms of the Creative Commons Attribution 4.0 International License ("CC-BY-4.0"). You are free to use the content in this document in any manner permitted under CC-BY-4.0, provided that you include the following attribution statement in any of your work:
 `
 
 // want is the expected part of a chunk; Hash and line numbers are checked
@@ -225,130 +229,130 @@ func TestSplit(t *testing.T) {
 		want  []want
 	}{
 		{name: "spell", input: spellFixture, want: []want{{
-			id: "spells/fireball", kind: "spell", title: "Fireball",
+			id: "spells.fireball", kind: "spell", title: "Fireball",
 			path: "Spells > Fireball", fullPath: "Spells > Spell Descriptions > Fireball",
 			text: "_Level 3 Evocation (Sorcerer, Wizard)_\n\n- **Casting Time:** Action\n- **Range:** 150 feet\n\n" +
 				"_**Using a Higher-Level Spell Slot.**_ The damage increases by 1d6 for each spell slot level above 3.",
 		}}},
 		{name: "rules section of an entity chapter is a rule", input: spellRulesFixture, want: []want{{
-			id: "spells/light", kind: "spell", title: "Light",
+			id: "spells.light", kind: "spell", title: "Light",
 			path: "Spells > Light", fullPath: "Spells > Spell Descriptions > Light",
 			text: "_Evocation Cantrip (Bard, Cleric, Sorcerer, Wizard)_",
 		}, {
-			id: "spells/casting-spells/spell-level", kind: "rule", title: "Spell Level",
+			id: "spells.casting-spells.spell-level", kind: "rule", title: "Spell Level",
 			path: "Spells > Casting Spells > Spell Level", fullPath: "Spells > Casting Spells > Spell Level",
-			text: "Every spell has a level from 0 to 9.\n\n#### Spell Slots\n\nSpellcasting is taxing.",
+			text: "Every spell has a level from 0 to 9, which is indicated in a spell's description. A spell's level is an indicator of how powerful it is. Cantrips — simple spells that can be cast almost by rote — are level 0. The rules for each spellcasting class say when its members gain access to spells of certain levels.\n\n#### Spell Slots\n\nSpellcasting is taxing, so a spellcaster can cast only a limited number of level 1+ spells before resting. Spell slots are the main way a spellcaster's magical potential is represented. Each spellcasting class gives its members a limited number of spell slots of certain spell levels. For example, a level 3 Wizard has four level 1 spell slots and two level 2 slots.",
 		}}},
 		{name: "monster under a group heading, with sub-headings", input: monsterFixture, want: []want{{
-			id: "monsters-a-z/goblin-warrior", kind: "monster", title: "Goblin Warrior",
+			id: "monsters-a-z.goblin-warrior", kind: "monster", title: "Goblin Warrior",
 			path: "Monsters A-Z > Goblin Warrior", fullPath: "Monsters A-Z > Goblins > Goblin Warrior",
 			text: "_Small Fey (Goblinoid), Chaotic Neutral_\n\n- **AC** 15\n\n#### Actions\n\n" +
-				"_**Scimitar.**_ _Melee Attack Roll:_ +4, reach 5 ft.\n\n#### Bonus Actions\n\n" +
+				"_**Scimitar.**_ _Melee Attack Roll:_ +4, reach 5 ft. _Hit:_ 5 (1d6 + 2) Slashing damage, plus 2 (1d4) Slashing damage if the attack roll had Advantage.\n\n#### Bonus Actions\n\n" +
 				"_**Nimble Escape.**_ The goblin takes the Disengage or Hide action.",
 		}}},
 		{name: "animal with sub-headings", input: animalFixture, want: []want{{
-			id: "animals/wolf", kind: "monster", title: "Wolf",
+			id: "animals.wolf", kind: "monster", title: "Wolf",
 			path: "Animals > Wolf", fullPath: "Animals > Wolf",
-			text: "_Medium Beast, Unaligned_\n\n- **AC** 12\n\n### Traits\n\n_**Pack Tactics.**_ The wolf has Advantage on attack rolls.",
+			text: "_Medium Beast, Unaligned_\n\n- **AC** 12\n\n### Traits\n\n_**Pack Tactics.**_ The wolf has Advantage on attack rolls against a creature if at least one of the wolf's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition.",
 		}}},
 		{name: "condition and other glossary entry", input: conditionFixture, want: []want{
 			{
-				id: "rules-glossary/prone", kind: "condition", title: "Prone",
+				id: "rules-glossary.prone", kind: "condition", title: "Prone",
 				path: "Rules Glossary > Prone", fullPath: `Rules Glossary > Rules Definitions > Prone \[Condition\]`,
 				text: "While you have the Prone condition, you experience the following effects.",
 			},
 			{
-				id: "rules-glossary/ready-action", kind: "glossary", title: "Ready [Action]",
+				id: "rules-glossary.ready-action", kind: "glossary", title: "Ready [Action]",
 				path: "Rules Glossary > Ready [Action]", fullPath: `Rules Glossary > Rules Definitions > Ready \[Action\]`,
-				text: "You take the Ready action to wait for a particular circumstance before you act.",
+				text: "You take the Ready action to wait for a particular circumstance before you act. To do so, you take this action on your turn, which lets you act by taking a Reaction before the start of your next turn.",
 			},
 		}},
 		{name: "feat under its category, container text kept", input: featFixture, want: []want{
 			{
-				id: "feats/feat-descriptions", kind: "rule", title: "Feat Descriptions",
+				id: "feats.feat-descriptions", kind: "rule", title: "Feat Descriptions",
 				path: "Feats > Feat Descriptions", fullPath: "Feats > Feat Descriptions",
-				text: "The feats that follow are organized by category.",
+				text: "The feats that follow are organized by category — Origin, General, Fighting Style, or Epic Boon — and alphabetized in each category.",
 			},
 			{
-				id: "feats/origin-feats/alert", kind: "feat", title: "Alert",
+				id: "feats.origin-feats.alert", kind: "feat", title: "Alert",
 				path: "Feats > Origin Feats > Alert", fullPath: "Feats > Feat Descriptions > Origin Feats > Alert",
 				text: "_Origin Feat_\n\nYou gain the following benefits.",
 			},
 		}},
 		{name: "rules h2 with text before its first h3 and a nested h4", input: rulesFixture, want: []want{
 			{
-				id: "playing-the-game/d20-tests", kind: "rule", title: "D20 Tests",
+				id: "playing-the-game.d20-tests", kind: "rule", title: "D20 Tests",
 				path: "Playing the Game > D20 Tests", fullPath: "Playing the Game > D20 Tests",
-				text: "When the outcome of an action is uncertain, the game uses a d20 roll to determine success or failure.",
+				text: "When the outcome of an action is uncertain, the game uses a d20 roll to determine success or failure. These rolls are called D20 Tests, and they come in three kinds: ability checks, saving throws, and attack rolls. They follow these steps:",
 			},
 			{
-				id: "playing-the-game/d20-tests/ability-checks", kind: "rule", title: "Ability Checks",
+				id: "playing-the-game.d20-tests.ability-checks", kind: "rule", title: "Ability Checks",
 				path: "Playing the Game > D20 Tests > Ability Checks", fullPath: "Playing the Game > D20 Tests > Ability Checks",
-				text: "An ability check represents a creature using talent and training.\n\n#### Ability Modifier\n\n" +
-					"An ability check is named for the ability modifier it uses.",
+				text: "An ability check represents a creature using talent and training to try to overcome a challenge, such as forcing open a stuck door, picking a lock, entertaining a crowd, or deciphering a cipher. The GM and the rules often call for an ability check when a creature attempts something other than an attack that has a chance of meaningful failure. When the outcome is uncertain and narratively interesting, the dice determine the result.\n\n#### Ability Modifier\n\n" +
+					"An ability check is named for the ability modifier it uses: a Strength check, an Intelligence check, and so on. Different ability checks are called for in different situations, depending on which ability is most relevant. See the table for examples of each check's use.",
 			},
 			{
-				id: "playing-the-game/actions/reactions", kind: "rule", title: "Reactions",
+				id: "playing-the-game.actions.reactions", kind: "rule", title: "Reactions",
 				path: "Playing the Game > Actions > Reactions", fullPath: "Playing the Game > Actions > Reactions",
-				text: "Certain special abilities, spells, and situations allow you to take a special action called a Reaction.",
+				text: `Certain special abilities, spells, and situations allow you to take a special action called a Reaction. A Reaction is an instant response to a trigger of some kind, which can occur on your turn or on someone else's. The Opportunity Attack, described later in "Playing the Game," is the most common type of Reaction.`,
 			},
 		}},
 		{name: "chapter text before its first h2", input: chapterIntroFixture, want: []want{
 			{
 				id: "magic-items", kind: "rule", title: "Magic Items",
 				path: "Magic Items", fullPath: "Magic Items",
-				text: "Magic items are gleaned from the hoards of felled monsters.",
+				text: "Magic items are gleaned from the hoards of felled monsters or discovered in long-lost vaults. Such items grant capabilities a character could rarely have otherwise, or they complement their owner's capabilities in wondrous ways.",
 			},
 			{
-				id: "magic-items/bag-of-holding", kind: "magic-item", title: "Bag of Holding",
+				id: "magic-items.bag-of-holding", kind: "magic-item", title: "Bag of Holding",
 				path: "Magic Items > Bag of Holding", fullPath: "Magic Items > Magic Items A-Z > Bag of Holding",
 				text: "_Wondrous Item, Uncommon_",
 			},
 		}},
 		{name: "table stays in its section; tool under a container", input: tableFixture, want: []want{
 			{
-				id: "equipment/coins", kind: "rule", title: "Coins",
+				id: "equipment.coins", kind: "rule", title: "Coins",
 				path: "Equipment > Coins", fullPath: "Equipment > Coins",
 				text: "A coin weighs about a third of an ounce, so fifty coins weigh a pound.\n\n" +
 					"| Coin                | Value in GP   |\n|---------------------|---------------|\n| Copper Piece (CP)   | 1/100         |",
 			},
 			{
-				id: "equipment/tools/artisans-tools/smiths-tools", kind: "equipment", title: "Smith's Tools",
+				id: "equipment.tools.artisans-tools.smiths-tools", kind: "equipment", title: "Smith's Tools",
 				path:     "Equipment > Tools > Artisan's Tools > Smith's Tools",
 				fullPath: "Equipment > Tools > Artisan's Tools > Smith's Tools",
-				text:     "**Ability:** Strength",
+				text:     "- **Ability:** Strength",
 			},
 			{
-				id: "equipment/tools/thieves-tools", kind: "equipment", title: "Thieves' Tools",
+				id: "equipment.tools.thieves-tools", kind: "equipment", title: "Thieves' Tools",
 				path: "Equipment > Tools > Thieves' Tools", fullPath: "Equipment > Tools > Other Tools > Thieves' Tools",
-				text: "**Ability:** Dexterity",
+				text: "- **Ability:** Dexterity",
 			},
 			{
-				id: "equipment/adventuring-gear/rope", kind: "equipment", title: "Rope",
+				id: "equipment.adventuring-gear.rope", kind: "equipment", title: "Rope",
 				path: "Equipment > Adventuring Gear > Rope", fullPath: "Equipment > Adventuring Gear > Rope",
-				text: "Rope has 2 HP and can be burst with a DC 20 Strength (Athletics) check.",
+				text: "As a Utilize action, you can tie a knot with Rope if you succeed on a DC 10 Dexterity (Sleight of Hand) check. The Rope can be burst with a successful DC 20 Strength (Athletics) check.",
 			},
 		}},
 		{name: "condition tag outside the Rules Glossary is kept as written", input: conditionElsewhereFixture, want: []want{{
-			id: "playing-the-game/foo-condition", kind: "rule", title: "Foo [Condition]",
+			id: "playing-the-game.foo-condition", kind: "rule", title: "Foo [Condition]",
 			path: "Playing the Game > Foo [Condition]", fullPath: `Playing the Game > Foo \[Condition\]`,
 			text: "Text.",
 		}}},
 		{name: "class section", input: classFixture, want: []want{{
-			id: "classes/barbarian/core-barbarian-traits", kind: "class", title: "Core Barbarian Traits",
+			id: "classes.barbarian.core-barbarian-traits", kind: "class", title: "Core Barbarian Traits",
 			path: "Classes > Barbarian > Core Barbarian Traits", fullPath: "Classes > Barbarian > Core Barbarian Traits",
-			text: "| Primary Ability            | Strength                |\n|----------------------------|-------------------------|\n" +
-				"| Hit Point Die              | D12 per Barbarian level |",
+			text: "| Primary Ability            | Strength                                                                             |\n|----------------------------|--------------------------------------------------------------------------------------|\n" +
+				"| Hit Point Die              | D12 per Barbarian level                                                              |",
 		}}},
 		{name: "background and species", input: originsFixture, want: []want{
 			{
-				id: "character-origins/character-backgrounds/acolyte", kind: "background", title: "Acolyte",
+				id: "character-origins.character-backgrounds.acolyte", kind: "background", title: "Acolyte",
 				path:     "Character Origins > Character Backgrounds > Acolyte",
 				fullPath: "Character Origins > Character Backgrounds > Background Descriptions > Acolyte",
 				text:     `- **Feat:** Magic Initiate (Cleric) (see "Feats")`,
 			},
 			{
-				id: "character-origins/character-species/dwarf", kind: "species", title: "Dwarf",
+				id: "character-origins.character-species.dwarf", kind: "species", title: "Dwarf",
 				path:     "Character Origins > Character Species > Dwarf",
 				fullPath: "Character Origins > Character Species > Species Descriptions > Dwarf",
 				text:     "- **Speed:** 30 feet",
@@ -357,7 +361,7 @@ func TestSplit(t *testing.T) {
 		{name: "legal information", input: legalFixture, want: []want{{
 			id: "legal-information", kind: "legal", title: "Legal Information",
 			path: "Legal Information", fullPath: "Legal Information",
-			text: `The System Reference Document 5.2.1 ("SRD 5.2.1") is provided to you free of charge.`,
+			text: `The System Reference Document 5.2.1 ("SRD 5.2.1") is provided to you free of charge by Wizards of the Coast LLC ("Wizards") under the terms of the Creative Commons Attribution 4.0 International License ("CC-BY-4.0"). You are free to use the content in this document in any manner permitted under CC-BY-4.0, provided that you include the following attribution statement in any of your work:`,
 		}}},
 	}
 	for _, tt := range tests {
@@ -398,7 +402,7 @@ func TestSplitErrors(t *testing.T) {
 			input: "# Spells\n\n## Spell Descriptions\n\n### Fireball\n\nOne.\n\n" +
 				"## Other Spells\n\n### Fireball\n\nTwo.\n\n# Spells\n\n## Spell Descriptions\n\n### Fireball\n\nThree.\n",
 			wantErr:  ErrDuplicateID,
-			mentions: []string{`"spells/fireball"`, `"Spells > Spell Descriptions > Fireball"`},
+			mentions: []string{`"spells.fireball"`, `"Spells > Spell Descriptions > Fireball"`},
 		},
 		{
 			name:     "text before the first chapter",
@@ -423,6 +427,17 @@ func TestSplitErrors(t *testing.T) {
 			input:    strings.Replace(tableFixture, "### Other Tools", "### Misc Tools", 1),
 			wantErr:  ErrUnmatchedPattern,
 			mentions: []string{`chapter "Equipment"`, `h4 under "Equipment > Tools > Other Tools"`},
+		},
+		{
+			name: "every unmatched pattern is reported",
+			input: strings.NewReplacer("### Artisan's Tools", "### Crafting Tools",
+				"### Other Tools", "### Misc Tools").Replace(tableFixture),
+			wantErr: ErrUnmatchedPattern,
+			mentions: []string{
+				`h4 under "Equipment > Tools > Artisan's Tools"`,
+				`h4 under "Equipment > Tools > Other Tools"`,
+				`container "Equipment > Tools > Other Tools"`,
+			},
 		},
 		{
 			name:     "entity at an unexpected level",
@@ -524,14 +539,14 @@ func TestParseHeading(t *testing.T) {
 	}
 }
 
-// TestUnmatchedContainer uses a test-only table entry: in the real table,
-// every container is matched whenever the entity rule beside it is.
+// TestUnmatchedContainer uses a test-only table, passed to split: in the real
+// table, every container is matched whenever the entity rule beside it is.
+// The input is not SRD text.
 func TestUnmatchedContainer(t *testing.T) {
-	saved := chapters["Monsters"]
-	t.Cleanup(func() { chapters["Monsters"] = saved })
-	chapters["Monsters"] = chapter{Split: 3, Kind: KindRule, Containers: [][]string{{"Stat Block Index"}}}
-
-	_, err := Split(strings.NewReader("# Monsters\n\n## Stat Block Overview\n\nText.\n"))
+	table := map[string]chapter{
+		"Monsters": {Split: 3, Kind: KindRule, Containers: [][]string{{"Stat Block Index"}}},
+	}
+	_, err := split(strings.NewReader("# Monsters\n\n## Stat Block Overview\n\nText.\n"), table)
 	if !errors.Is(err, ErrUnmatchedPattern) {
 		t.Fatalf("err = %v, want %v", err, ErrUnmatchedPattern)
 	}

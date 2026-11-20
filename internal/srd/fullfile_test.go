@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -22,20 +23,7 @@ const repoRoot = "../.."
 // "## Spell Descriptions"; 330 stat blocks (235 in Monsters A-Z, 95 in
 // Animals); 15 headings ending "[Condition]".
 func TestFullFile(t *testing.T) {
-	path := filepath.Join(repoRoot, DefaultPath)
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		t.Skipf("skipping: %s not found; run scripts/srd-download.sh to get the SRD Markdown", DefaultPath)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	pin := pinnedSHA256(t)
-	sum := sha256.Sum256(data)
-	if got := hex.EncodeToString(sum[:]); got != pin {
-		t.Fatalf("%s has SHA-256 %s, not the pinned %s; run scripts/srd-download.sh again", DefaultPath, got, pin)
-	}
-
+	data := readPinnedFile(t)
 	chunks, err := Split(strings.NewReader(string(data)))
 	if err != nil {
 		t.Fatalf("Split: %v", err)
@@ -43,7 +31,9 @@ func TestFullFile(t *testing.T) {
 	// Every kind is counted, so that an entity heading renamed, moved or at
 	// an unexpected level cannot silently become (part of) a rule chunk.
 	// spell, monster and condition are the scripts/srd-validate.sh counts;
-	// the others are those printed by "ingest srd -dry-run" on this file.
+	// the others were printed by "ingest srd -dry-run" on this file. When the
+	// pin changes, check them against an independent count before changing
+	// them: see "Changing the source pin" in docs/srd-chunking.md.
 	if got, want := len(chunks), 1508; got != want {
 		t.Errorf("chunks = %d, want %d", got, want)
 	}
@@ -86,12 +76,13 @@ func TestFullFile(t *testing.T) {
 		kind Kind
 		path string
 	}{
-		{"spells/fireball", KindSpell, "Spells > Fireball"},
-		{"rules-glossary/prone", KindCondition, "Rules Glossary > Prone"},
-		{"monsters-a-z/goblin-warrior", KindMonster, "Monsters A-Z > Goblin Warrior"},
-		{"animals/wolf", KindMonster, "Animals > Wolf"},
-		{"playing-the-game/actions/reactions", KindRule, "Playing the Game > Actions > Reactions"},
-		{"classes/barbarian/core-barbarian-traits", KindClass, "Classes > Barbarian > Core Barbarian Traits"},
+		{"spells.fireball", KindSpell, "Spells > Fireball"},
+		{"rules-glossary.prone", KindCondition, "Rules Glossary > Prone"},
+		{"monsters-a-z.goblin-warrior", KindMonster, "Monsters A-Z > Goblin Warrior"},
+		{"animals.wolf", KindMonster, "Animals > Wolf"},
+		{"playing-the-game.actions.reactions", KindRule, "Playing the Game > Actions > Reactions"},
+		{"classes.barbarian.core-barbarian-traits", KindClass, "Classes > Barbarian > Core Barbarian Traits"},
+		{"equipment.adventuring-gear.alchemists-fire", KindEquipment, "Equipment > Adventuring Gear > Alchemist's Fire"},
 	}
 	for _, ex := range examples {
 		c, ok := byID[ex.id]
@@ -105,6 +96,69 @@ func TestFullFile(t *testing.T) {
 	}
 
 	checkCoverage(t, string(data), chunks)
+}
+
+// srdFixtures are the fixtures of chunk_test.go presented as SRD excerpts.
+// A fixture that is not SRD text must not be listed here, and must say so.
+var srdFixtures = map[string]string{
+	"spellFixture":        spellFixture,
+	"spellRulesFixture":   spellRulesFixture,
+	"monsterFixture":      monsterFixture,
+	"animalFixture":       animalFixture,
+	"conditionFixture":    conditionFixture,
+	"featFixture":         featFixture,
+	"rulesFixture":        rulesFixture,
+	"chapterIntroFixture": chapterIntroFixture,
+	"tableFixture":        tableFixture,
+	"classFixture":        classFixture,
+	"originsFixture":      originsFixture,
+	"legalFixture":        legalFixture,
+}
+
+// TestFixturesAreSRDText checks that every non-blank line of each SRD fixture
+// is a whole line of the pinned SRD file, as written, so that no test presents
+// invented or altered rules text as SRD text. It is skipped when the file is
+// absent.
+func TestFixturesAreSRDText(t *testing.T) {
+	data := readPinnedFile(t)
+	lines := map[string]bool{}
+	for _, l := range strings.Split(string(data), "\n") {
+		lines[l] = true
+	}
+	tests := make([]string, 0, len(srdFixtures))
+	for name := range srdFixtures {
+		tests = append(tests, name)
+	}
+	slices.Sort(tests)
+	for _, name := range tests {
+		t.Run(name, func(t *testing.T) {
+			for i, l := range strings.Split(srdFixtures[name], "\n") {
+				if strings.TrimSpace(l) != "" && !lines[l] {
+					t.Errorf("fixture line %d is not a line of %s: %q", i+1, DefaultPath, l)
+				}
+			}
+		})
+	}
+}
+
+// readPinnedFile returns the SRD file downloaded by scripts/srd-download.sh.
+// It skips the test when the file is absent, and fails it when the file is
+// not the pinned one.
+func readPinnedFile(t *testing.T) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repoRoot, DefaultPath))
+	if errors.Is(err, os.ErrNotExist) {
+		t.Skipf("skipping: %s not found; run scripts/srd-download.sh to get the SRD Markdown", DefaultPath)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := pinnedSHA256(t)
+	sum := sha256.Sum256(data)
+	if got := hex.EncodeToString(sum[:]); got != pin {
+		t.Fatalf("%s has SHA-256 %s, not the pinned %s; run scripts/srd-download.sh again", DefaultPath, got, pin)
+	}
+	return data
 }
 
 // pinnedSHA256 reads SRD_MARKDOWN_SHA256 from scripts/srd-source.env.

@@ -11,10 +11,12 @@
 // A chunk id is the slug of its short citation path: each path segment is
 // lower-cased, apostrophes are removed, every other run of characters that are
 // not ASCII letters or digits becomes one "-", leading and trailing "-" are
-// trimmed, and the segments are joined with "/". For example the path
+// trimmed, and the segments are joined with ".". For example the path
 // "Playing the Game > Actions > Reactions" has the id
-// "playing-the-game/actions/reactions", and "Spells > Fireball" has the id
-// "spells/fireball". Ids are unique in the corpus: a collision is an error.
+// "playing-the-game.actions.reactions", and "Spells > Fireball" has the id
+// "spells.fireball". A segment holds only [a-z0-9-], so "." cannot occur
+// inside one, and an id needs no encoding in a URL path. Ids are unique in
+// the corpus: a collision is an error.
 package srd
 
 import (
@@ -97,8 +99,12 @@ func ReadFile(path string) ([]Chunk, error) {
 }
 
 // Split reads the SRD Markdown and returns its chunks in document order.
-func Split(r io.Reader) ([]Chunk, error) {
-	s := splitter{seen: map[string][]string{}, used: map[string]bool{}}
+func Split(r io.Reader) ([]Chunk, error) { return split(r, chapters) }
+
+// split is Split with the split table as a parameter, so that tests can use
+// their own table without changing the package-level one.
+func split(r io.Reader, table map[string]chapter) ([]Chunk, error) {
+	s := splitter{table: table, seen: map[string][]string{}, used: map[string]bool{}}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	n := 0
@@ -121,24 +127,25 @@ func Split(r io.Reader) ([]Chunk, error) {
 }
 
 // checkPatterns fails when an entity rule or a container of a chapter found in
-// the input matched no heading of that chapter.
+// the input matched no heading of that chapter. It reports every such pattern.
 func (s *splitter) checkPatterns() error {
+	var errs []error
 	for _, title := range s.chapterTitles {
-		ch := chapters[title]
+		ch := s.table[title]
 		for i, r := range ch.Entities {
 			if !s.used[patternKey(title, "entity", i)] {
-				return fmt.Errorf("%w: chapter %q, entity rule (h%d under %q)", ErrUnmatchedPattern,
-					title, r.level(), strings.Join(append([]string{title}, r.Under...), " > "))
+				errs = append(errs, fmt.Errorf("%w: chapter %q, entity rule (h%d under %q)", ErrUnmatchedPattern,
+					title, r.level(), strings.Join(append([]string{title}, r.Under...), " > ")))
 			}
 		}
 		for i, c := range ch.Containers {
 			if !s.used[patternKey(title, "container", i)] {
-				return fmt.Errorf("%w: chapter %q, container %q", ErrUnmatchedPattern,
-					title, strings.Join(append([]string{title}, c...), " > "))
+				errs = append(errs, fmt.Errorf("%w: chapter %q, container %q", ErrUnmatchedPattern,
+					title, strings.Join(append([]string{title}, c...), " > ")))
 			}
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func patternKey(chapter, what string, i int) string {
@@ -146,6 +153,7 @@ func patternKey(chapter, what string, i int) string {
 }
 
 type splitter struct {
+	table   map[string]chapter // the split table, keyed on the chapter title
 	chunks  []Chunk
 	seen    map[string][]string // id -> full path, to report collisions
 	stack   [7]*heading         // open headings by level (1-6)
@@ -184,7 +192,7 @@ func (s *splitter) line(n int, text string) error {
 		return fmt.Errorf("line %d: %w", n, ErrTextBeforeChapter)
 	}
 	if h.level == 1 {
-		ch, ok := chapters[h.title]
+		ch, ok := s.table[h.title]
 		if !ok {
 			return fmt.Errorf("line %d: %w: %q", n, ErrUnknownChapter, h.title)
 		}
@@ -362,7 +370,7 @@ func slugPath(path []string) (string, error) {
 			return "", fmt.Errorf("%w: %q", ErrEmptySlug, p)
 		}
 	}
-	return strings.Join(segs, "/"), nil
+	return strings.Join(segs, "."), nil
 }
 
 func slug(s string) string {
