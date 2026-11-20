@@ -78,12 +78,19 @@ make vet
 make test
 ```
 
-Integration tests need PostgreSQL. They run only when `DATABASE_URL` points at the
-`grimoire_test` database, and they reset its schema. Otherwise they are skipped with a message;
-they never start a service:
+Integration tests need PostgreSQL. They read their connection string from `TEST_DATABASE_URL`
+only, never from `DATABASE_URL`, which is for the application. They run only against the
+`grimoire_test` database, and they reset its schema. They never start a service.
+
+- `TEST_DATABASE_URL` unset: the integration tests are skipped with a message. This is the only
+  case that skips, so `make test` with only a development `DATABASE_URL` loaded runs the unit
+  tests and touches no database.
+- `TEST_DATABASE_URL` set: anything that prevents the integration tests from running fails them,
+  with a message naming the case: empty, incomplete or malformed URL, unreachable server,
+  missing database, failed authentication, or a database other than `grimoire_test`.
 
 ```sh
-DATABASE_URL="postgres://USER@localhost:5433/grimoire_test?sslmode=disable" make test
+TEST_DATABASE_URL="postgres://USER@localhost:5433/grimoire_test?sslmode=disable" make test
 ```
 
 Use `go test -v ./...` to see which tests were skipped and why.
