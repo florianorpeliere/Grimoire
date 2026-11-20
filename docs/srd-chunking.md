@@ -59,8 +59,10 @@ is kept as written. Other glossary tags (`[Action]`, `[Hazard]`,
 - **Full path**: every heading from the chapter down, as written in the source, stored alongside.
 - **Id**: the slug of the short path. Each segment is lower-cased, apostrophes are removed, every
   other run of characters that are not ASCII letters or digits becomes one `-`, leading and
-  trailing `-` are trimmed, and the segments are joined with `/`. Examples: `spells/fireball`,
-  `playing-the-game/actions/reactions`, `equipment/adventuring-gear/alchemists-fire`. Ids are
+  trailing `-` are trimmed, and the segments are joined with `.`. Examples: `spells.fireball`,
+  `playing-the-game.actions.reactions`, `rules-glossary.prone`,
+  `equipment.adventuring-gear.alchemists-fire`. A segment holds only `[a-z0-9-]`, so `.` cannot
+  occur inside one, and an id can be used in a URL path without encoding. Ids are
   deterministic and unique in the corpus; a collision is an error naming both full paths. An id
   changes when a heading of its short path is renamed; the content hash (SHA-256 of the text)
   detects text changes.
@@ -76,3 +78,29 @@ Prints the number of chunks per kind, the size distribution and the chunks above
 tokens, then every chunk (id, kind, estimated tokens, short path). It does not use the database.
 Tokens are **estimated** as characters (Unicode code points) divided by 4, rounded up; this is not
 a tokenizer count.
+
+## Changing the source pin
+
+`TestFullFile` (`internal/srd/fullfile_test.go`) asserts the total chunk count and the count of
+every kind on the pinned file. These numbers are the check on the chunker, so when the pin in
+`scripts/srd-source.env` changes (see [srd-source.md](srd-source.md)), they are **not** copied from
+the new dry run, which would only repeat what the chunker does:
+
+1. Run `scripts/srd-download.sh`, `scripts/srd-validate.sh` and `make srd-dry-run` on the new pin.
+2. `spell`, `monster` and `condition` are counted independently by `scripts/srd-validate.sh`
+   (headings under Spell Descriptions against the PDF school and level lines; stat block headings
+   against the PDF Index of Stat Blocks and its `AC` lines; headings ending `[Condition]` against
+   the PDF). The dry run must give these counts.
+3. `background`, `class`, `equipment`, `feat`, `glossary`, `magic-item` and `species` are **not**
+   validated by the script. Count their entity headings in the Markdown file directly (for
+   example with `grep` on the heading level and parent heading given in the split table above),
+   and check the dry run against that count. For `glossary`, count the h3 under Rules Definitions
+   minus those ending `\[Condition\]`, which are `condition` chunks. A difference must be
+   explained, e.g. a heading with no text of its own, which produces no chunk.
+4. `rule` and `legal` have no content marker. Compare the chunk lists of the dry run before and
+   after the pin change, and check each added, removed or renamed id against the source.
+5. Only then update the counts in `TestFullFile`, the counts in the comments of
+   `internal/srd/table.go`, and the PR description, with the independent count next to each.
+
+`scripts/srd-validate.sh` also checks the chapters against the PDF table of contents; it does not
+check the split inside a chapter.
