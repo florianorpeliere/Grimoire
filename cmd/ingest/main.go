@@ -4,8 +4,11 @@
 //
 //	ingest migrate              apply pending schema migrations to the database at DATABASE_URL
 //	ingest srd -dry-run [file]  split the SRD Markdown into chunks and print a report, without the database
+//	ingest srd [file]           split the SRD Markdown and store the chunks in the database at DATABASE_URL
 //
 // Migrations are never applied implicitly: run "ingest migrate" explicitly.
+// Storing the SRD upserts the chunks by id and deletes the stored chunks that
+// are no longer in the file.
 package main
 
 import (
@@ -26,6 +29,8 @@ commands:
   migrate               apply pending schema migrations to the database at DATABASE_URL
   srd -dry-run [file]   split the SRD Markdown (default data/srd/SRD_CC_v5.2.1.md) into
                         chunks and print a report; does not touch the database
+  srd [file]            split the SRD Markdown and store the chunks in the database at
+                        DATABASE_URL: upsert by id, delete chunks no longer in the file
 `
 
 // errUsage marks command-line mistakes, reported with exit code 2.
@@ -55,7 +60,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 		}
 		return migrate(ctx, getenv, stdout)
 	case "srd":
-		return srdCommand(args[1:], stdout)
+		return srdCommand(ctx, args[1:], getenv, stdout)
 	default:
 		return fmt.Errorf("%w: unknown command %q", errUsage, args[0])
 	}

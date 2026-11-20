@@ -1,7 +1,7 @@
 # Common commands. migrate reads DATABASE_URL from the environment; test reads
 # TEST_DATABASE_URL only, and skips the integration tests when it is unset.
 
-.PHONY: build vet test migrate srd-dry-run
+.PHONY: build vet test migrate srd-dry-run srd
 
 build:
 	go build -o bin/ ./...
@@ -17,3 +17,6 @@ migrate:
 
 srd-dry-run:
 	go run ./cmd/ingest srd -dry-run
+
+srd:
+	go run ./cmd/ingest srd

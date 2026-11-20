@@ -113,15 +113,40 @@ func checkName(name string) error {
 	return nil
 }
 
+// lockKey identifies the advisory lock that serialises the tests calling Reset.
+const lockKey = 0x67726d74 // "grmt"
+
+// lockWait bounds how long Reset waits for another test to release the lock.
+const lockWait = 2 * time.Minute
+
 // Reset empties the test database by recreating the public schema, which
 // also drops the extensions installed in it.
+//
+// go test runs the packages in parallel, and they share grimoire_test, so
+// Reset first takes a PostgreSQL advisory lock that it holds until the test
+// and its subtests end: the tests calling Reset run one at a time. Call it
+// once per test, from the top-level test.
 //
 // The database check and the drop are one statement, so they run on the same
 // connection and Reset refuses any database but grimoire_test, whatever
 // connection it is given.
 func Reset(t testing.TB, conn *sql.DB) {
 	t.Helper()
-	if _, err := conn.ExecContext(context.Background(), resetStatement(Name)); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), lockWait)
+	defer cancel()
+	lock, err := conn.Conn(ctx)
+	if err != nil {
+		t.Fatalf("reset test database: %v", err)
+	}
+	if _, err := lock.ExecContext(ctx, "SELECT pg_advisory_lock($1)", lockKey); err != nil {
+		lock.Close()
+		t.Fatalf("reset test database: wait for the other integration tests: %v", err)
+	}
+	t.Cleanup(func() {
+		lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", lockKey)
+		lock.Close()
+	})
+	if _, err := conn.ExecContext(ctx, resetStatement(Name)); err != nil {
 		t.Fatalf("reset test database: %v", err)
 	}
 }
