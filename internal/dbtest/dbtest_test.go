@@ -207,6 +207,66 @@ func TestResetStatementRefusesOtherDatabase(t *testing.T) {
 	}
 }
 
+// Reset waits while another session holds the lock, as a test of another
+// package that called Reset would.
+func TestResetWaitsForLock(t *testing.T) {
+	conn := Open(t)
+	ctx := context.Background()
+	other, err := conn.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	if _, err := other.ExecContext(ctx, "SELECT pg_advisory_lock($1)", lockKey); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t.Run("reset", func(t *testing.T) { Reset(t, conn) })
+	}()
+	select {
+	case <-done:
+		t.Fatal("Reset returned while another session held the lock")
+	case <-time.After(300 * time.Millisecond):
+	}
+	if _, err := other.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", lockKey); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Reset did not return after the lock was released")
+	}
+}
+
+// A second Reset while this test holds the lock fails at once instead of
+// waiting for itself.
+func TestResetTwiceFails(t *testing.T) {
+	conn := Open(t)
+	Reset(t, conn)
+
+	r := &recorder{}
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		defer close(done)
+		Reset(r, conn)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("second Reset is still waiting after 10 s")
+	}
+	if !strings.Contains(r.failed, "Reset was already called") {
+		t.Errorf("failure message = %q, want it to say Reset was already called", r.failed)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("second Reset took %v, want it to fail at once", elapsed)
+	}
+}
+
 func ptr(s string) *string { return &s }
 
 // setenv sets key to *v for the test, or unsets it when v is nil.

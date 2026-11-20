@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/florianorpeliere/grimoire/internal/dbtest"
 	"github.com/florianorpeliere/grimoire/internal/srd"
 )
 
@@ -78,6 +79,81 @@ func TestSRDDryRun(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if !strings.Contains(out.String(), tt.line) {
 				t.Errorf("report has no line %q:\n%s", tt.line, out.String())
+			}
+		})
+	}
+}
+
+// TestSRDStore stores the fixture in grimoire_test through the command, as
+// "ingest srd" does with DATABASE_URL.
+func TestSRDStore(t *testing.T) {
+	conn := dbtest.Open(t)
+	dbtest.Reset(t, conn)
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "srd.md")
+	if err := os.WriteFile(path, []byte(dryRunFixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The fixture without its "Casting Spells" section: one chunk of two.
+	partial := filepath.Join(t.TempDir(), "partial.md")
+	cut := strings.Index(dryRunFixture, "## Casting Spells")
+	if err := os.WriteFile(partial, []byte(dryRunFixture[:cut]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"DATABASE_URL": strings.TrimSpace(os.Getenv(dbtest.EnvURL))}
+	getenv := func(k string) string { return env[k] }
+
+	// Each step runs on the database left by the previous one.
+	steps := []struct {
+		name    string
+		args    []string
+		wantErr string
+		wantOut []string
+	}{
+		{
+			name:    "before migrate: names the missing step",
+			args:    []string{"srd", path},
+			wantErr: `run "ingest migrate" first`,
+		},
+		{name: "migrate", args: []string{"migrate"}, wantOut: []string{"migrate: applied version"}},
+		{
+			name:    "first run: rows stored equal the dry-run total",
+			args:    []string{"srd", path},
+			wantOut: []string{"chunks: 2\n", "inserted 2, updated 0, unchanged 0, deleted 0\n", "rows stored: 2\n"},
+		},
+		{
+			name:    "second run: nothing re-inserted",
+			args:    []string{"srd", path},
+			wantOut: []string{"chunks: 2\n", "inserted 0, updated 0, unchanged 2, deleted 0\n", "rows stored: 2\n"},
+		},
+		{
+			name:    "partial file: refused, the flag is named",
+			args:    []string{"srd", partial},
+			wantErr: "1 of 2 (more than 5%); nothing was changed (check the file; pass -allow-large-delete",
+		},
+		{
+			name:    "partial file with -allow-large-delete: the removed chunk is deleted",
+			args:    []string{"srd", "-allow-large-delete", partial},
+			wantOut: []string{"chunks: 1\n", "inserted 0, updated 0, unchanged 1, deleted 1\n", "rows stored: 1\n"},
+		},
+	}
+	for _, s := range steps {
+		t.Run(s.name, func(t *testing.T) {
+			var out bytes.Buffer
+			err := run(ctx, s.args, getenv, &out)
+			if s.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), s.wantErr) {
+					t.Fatalf("err = %v, want it to contain %q", err, s.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			for _, line := range s.wantOut {
+				if !strings.Contains(out.String(), line) {
+					t.Errorf("output has no %q:\n%s", line, out.String())
+				}
 			}
 		})
 	}

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -113,15 +114,53 @@ func checkName(name string) error {
 	return nil
 }
 
+// lockKey identifies the advisory lock that serialises the tests calling Reset.
+const lockKey = 0x67726d74 // "grmt"
+
+// lockWait bounds how long Reset waits for another test to release the lock.
+const lockWait = 2 * time.Minute
+
+// held is true while a test of this process holds the lock. A second Reset
+// would wait for the lock on another connection, so for itself: it fails at
+// once instead.
+var held atomic.Bool
+
 // Reset empties the test database by recreating the public schema, which
 // also drops the extensions installed in it.
+//
+// go test runs the packages in parallel, and they share grimoire_test, so
+// Reset first takes a PostgreSQL advisory lock that it holds until the test
+// and its subtests end: the tests calling Reset run one at a time. Call it
+// once per test, from the top-level test: a second call while the lock is
+// held in this process (in a subtest, or a parallel test of the same
+// package) fails at once.
 //
 // The database check and the drop are one statement, so they run on the same
 // connection and Reset refuses any database but grimoire_test, whatever
 // connection it is given.
 func Reset(t testing.TB, conn *sql.DB) {
 	t.Helper()
-	if _, err := conn.ExecContext(context.Background(), resetStatement(Name)); err != nil {
+	if !held.CompareAndSwap(false, true) {
+		t.Fatalf("reset test database: Reset was already called by this test or a test running alongside it in this package; call it once, from the top-level test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), lockWait)
+	defer cancel()
+	lock, err := conn.Conn(ctx)
+	if err != nil {
+		held.Store(false)
+		t.Fatalf("reset test database: %v", err)
+	}
+	if _, err := lock.ExecContext(ctx, "SELECT pg_advisory_lock($1)", lockKey); err != nil {
+		lock.Close()
+		held.Store(false)
+		t.Fatalf("reset test database: wait for the other integration tests: %v", err)
+	}
+	t.Cleanup(func() {
+		lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", lockKey)
+		lock.Close()
+		held.Store(false)
+	})
+	if _, err := conn.ExecContext(ctx, resetStatement(Name)); err != nil {
 		t.Fatalf("reset test database: %v", err)
 	}
 }

@@ -1,11 +1,18 @@
 package main
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"sort"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/florianorpeliere/grimoire/internal/db"
 	"github.com/florianorpeliere/grimoire/internal/srd"
 )
 
@@ -16,17 +23,19 @@ const largeChunkTokens = 4000
 // sizeBuckets are the upper bounds (estimated tokens) of the size distribution.
 var sizeBuckets = []int{100, 250, 500, 1000, 2000, 4000}
 
-// srdCommand runs "ingest srd". Only the dry run exists: storing the chunks
-// comes with the database schema for them.
-func srdCommand(args []string, stdout io.Writer) error {
+// codeUndefinedTable is the SQLSTATE of a query on a missing table.
+const codeUndefinedTable = "42P01"
+
+// srdCommand runs "ingest srd": with -dry-run it prints the chunk report,
+// otherwise it stores the chunks in the database at DATABASE_URL.
+func srdCommand(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("srd", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	dryRun := fs.Bool("dry-run", false, "print the chunk report without touching the database")
+	allowLargeDelete := fs.Bool("allow-large-delete", false,
+		fmt.Sprintf("let the run delete more than %g%% of the stored chunks", srd.MaxDeleteShare*100))
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("%w: srd: %v", errUsage, err)
-	}
-	if !*dryRun {
-		return fmt.Errorf("%w: srd: storing chunks is not available yet, use -dry-run", errUsage)
 	}
 	if fs.NArg() > 1 {
 		return fmt.Errorf("%w: srd takes at most one file", errUsage)
@@ -35,11 +44,58 @@ func srdCommand(args []string, stdout io.Writer) error {
 	if fs.NArg() == 1 {
 		path = fs.Arg(0)
 	}
+	if *dryRun && *allowLargeDelete {
+		return fmt.Errorf("%w: srd: -allow-large-delete has no effect with -dry-run", errUsage)
+	}
+	if *dryRun {
+		chunks, err := srd.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		writeReport(stdout, path, chunks)
+		return nil
+	}
+
+	url, err := db.URLFromEnv(getenv)
+	if err != nil {
+		return err
+	}
 	chunks, err := srd.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	writeReport(stdout, path, chunks)
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	conn, err := db.Open(pingCtx, url)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return storeChunks(ctx, conn, path, chunks, srd.StoreOptions{AllowLargeDelete: *allowLargeDelete}, stdout)
+}
+
+// storeChunks stores chunks and prints what changed and the rows stored.
+func storeChunks(ctx context.Context, conn *sql.DB, path string, chunks []srd.Chunk, opts srd.StoreOptions, stdout io.Writer) error {
+	res, err := srd.Store(ctx, conn, srd.Version, chunks, opts)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == codeUndefinedTable {
+		return fmt.Errorf("%w (run \"ingest migrate\" first)", err)
+	}
+	if errors.Is(err, srd.ErrLargeDelete) {
+		return fmt.Errorf("%w (check the file; pass -allow-large-delete if the deletions are intended)", err)
+	}
+	if err != nil {
+		return err
+	}
+	var rows int
+	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM srd_chunks").Scan(&rows); err != nil {
+		return fmt.Errorf("count stored chunks: %w", err)
+	}
+	fmt.Fprintf(stdout, "srd: %s, SRD %s\n", path, srd.Version)
+	fmt.Fprintf(stdout, "chunks: %d\n", len(chunks))
+	fmt.Fprintf(stdout, "inserted %d, updated %d, unchanged %d, deleted %d\n",
+		res.Inserted, res.Updated, res.Unchanged, res.Deleted)
+	fmt.Fprintf(stdout, "rows stored: %d\n", rows)
 	return nil
 }
 
