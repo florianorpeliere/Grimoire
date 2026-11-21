@@ -1,6 +1,10 @@
-package srd
+package db_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/florianorpeliere/grimoire/internal/db"
+)
 
 func TestVectorLiteral(t *testing.T) {
 	tests := []struct {
@@ -14,8 +18,8 @@ func TestVectorLiteral(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := vectorLiteral(tt.v); got != tt.want {
-				t.Errorf("vectorLiteral(%v) = %q, want %q", tt.v, got, tt.want)
+			if got := db.VectorLiteral(tt.v); got != tt.want {
+				t.Errorf("VectorLiteral(%v) = %q, want %q", tt.v, got, tt.want)
 			}
 		})
 	}

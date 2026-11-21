@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/florianorpeliere/grimoire/internal/db"
 	"github.com/florianorpeliere/grimoire/internal/embed"
 )
 
@@ -225,7 +225,7 @@ WHERE id = $4 AND path = $5 AND content_hash = $6`)
 			return 0, fmt.Errorf("%w: chunk %s got %d dimensions from %s, want %d",
 				ErrDimensionMismatch, p.id, len(vecs[i]), e.Model(), e.Dimension())
 		}
-		r, err := stmt.ExecContext(ctx, vectorLiteral(vecs[i]), e.Model(), e.Dimension(), p.id, p.path, p.hash)
+		r, err := stmt.ExecContext(ctx, db.VectorLiteral(vecs[i]), e.Model(), e.Dimension(), p.id, p.path, p.hash)
 		if err != nil {
 			return 0, fmt.Errorf("store embedding of %s: %w", p.id, err)
 		}
@@ -237,17 +237,4 @@ WHERE id = $4 AND path = $5 AND content_hash = $6`)
 		return 0, fmt.Errorf("store embeddings: %w", err)
 	}
 	return n, nil
-}
-
-// vectorLiteral formats v as pgvector's text input, e.g. [0.1,-2,3e-05].
-func vectorLiteral(v []float32) string {
-	b := make([]byte, 0, len(v)*12)
-	b = append(b, '[')
-	for i, f := range v {
-		if i > 0 {
-			b = append(b, ',')
-		}
-		b = strconv.AppendFloat(b, float64(f), 'g', -1, 32)
-	}
-	return string(append(b, ']'))
 }
