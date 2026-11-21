@@ -9,6 +9,7 @@ Work in progress. Everything runs locally with native services: no Docker, no ho
 
 - Go 1.27
 - PostgreSQL 17 with the [pgvector](https://github.com/pgvector/pgvector) extension
+- [Ollama](https://ollama.com) with the embedding model `qwen3-embedding:0.6b`
 
 ## Local setup (macOS, Homebrew)
 
@@ -57,6 +58,10 @@ and adapt `DATABASE_URL`.
    (port 5432) and could connect to another instance. In the examples below, replace `USER`
    with your PostgreSQL role.
 
+   The Ollama server is read from `OLLAMA_HOST` only, with no default: an `http://` or
+   `https://` URL with a host, e.g. `http://localhost:11434`. Pull the embedding model once with
+   `ollama pull qwen3-embedding:0.6b`; nothing in the project pulls it.
+
    The tests never read `DATABASE_URL`: integration tests read `TEST_DATABASE_URL`, which
    `.env.example` leaves commented out, so loading `.env` does not turn them on. To enable
    them, uncomment it in `.env` or set it for one run (see [Build and test](#build-and-test)).
@@ -94,6 +99,23 @@ nothing and fails; if the deletions are intended, run
 The table has a full-text index over each chunk's title, short citation path and text, used by
 the keyword search in `internal/search`.
 
+`make srd` then embeds the chunks with the Ollama server at `OLLAMA_HOST` (model
+`qwen3-embedding:0.6b`, 1024 dimensions, batches of 32). The text embedded for a chunk is its
+short citation path, a blank line, then its text. Each row stores its embedding (`vector(1024)`,
+no ANN index: search scans them all), the model name and the dimension. Only the chunks without
+an embedding from the current model are embedded: a chunk whose path and text are unchanged
+keeps its embedding, so a second run embeds nothing. It prints how many chunks were embedded and
+kept, and how long it took.
+
+- Long input is never truncated: every call asks for an 8,192-token context (the model supports
+  32,768; Ollama's default is 4,096) and sets `truncate` to false, so Ollama refuses an input
+  that is too long instead of cutting it. Such chunks are listed with their estimated size and
+  the run fails after embedding the others.
+- Transient errors (network, HTTP 429 or 5xx) are retried 3 times, after 1, 2 and 4 seconds.
+  A persistent error makes the command exit non-zero with Ollama's message; the chunks embedded
+  before it are kept.
+- A provider dimension other than the column's makes the command fail before embedding anything.
+
 ## Build and test
 
 ```sh
@@ -117,14 +139,23 @@ only, never from `DATABASE_URL`, which is for the application. They run only aga
 TEST_DATABASE_URL="postgres://USER@localhost:5433/grimoire_test?sslmode=disable" make test
 ```
 
+Tests that call the real Ollama server read `OLLAMA_HOST`, and are skipped with a message when
+it is unset, the server is unreachable or the model is not pulled. The other tests use a fake
+embedding provider.
+
+```sh
+OLLAMA_HOST="http://localhost:11434" make test
+```
+
 Use `go test -v ./...` to see which tests were skipped and why.
 
 ## Layout
 
 ```
-cmd/ingest/        database migrations, SRD chunking dry run and storage
+cmd/ingest/        database migrations, SRD chunking dry run, storage and embedding
 internal/db/       connection and embedded migrations
-internal/srd/      SRD Markdown split into chunks (see docs/srd-chunking.md), and their storage
+internal/srd/      SRD Markdown split into chunks (see docs/srd-chunking.md), their storage and embeddings
+internal/embed/    embedding provider interface; ollama/ is the Ollama provider, embedtest/ a fake
 internal/search/   keyword (full-text) search over the SRD chunks
 internal/dbtest/   helpers for integration tests
 ```

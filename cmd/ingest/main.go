@@ -5,12 +5,15 @@
 //	ingest migrate              apply pending schema migrations to the database at DATABASE_URL
 //	ingest srd -dry-run [file]  split the SRD Markdown into chunks and print a report, without the database
 //	ingest srd [-allow-large-delete] [file]
-//	                            split the SRD Markdown and store the chunks in the database at DATABASE_URL
+//	                            split the SRD Markdown, store the chunks in the database at DATABASE_URL
+//	                            and embed them with the Ollama server at OLLAMA_HOST
 //
 // Migrations are never applied implicitly: run "ingest migrate" explicitly.
 // Storing the SRD upserts the chunks by id and deletes the stored chunks that
 // are no longer in the file. A run that would delete more than 5% of the
-// stored chunks changes nothing unless -allow-large-delete is given.
+// stored chunks changes nothing unless -allow-large-delete is given. Then
+// every chunk without an embedding from the current model is embedded; a
+// chunk whose path and text are unchanged keeps its embedding.
 package main
 
 import (
@@ -23,6 +26,8 @@ import (
 	"time"
 
 	"github.com/florianorpeliere/grimoire/internal/db"
+	"github.com/florianorpeliere/grimoire/internal/embed"
+	"github.com/florianorpeliere/grimoire/internal/embed/ollama"
 )
 
 const usage = `usage: ingest <command>
@@ -35,8 +40,18 @@ commands:
                         split the SRD Markdown and store the chunks in the database at
                         DATABASE_URL: upsert by id, delete chunks no longer in the file;
                         refuses to delete more than 5% of the stored chunks without
-                        -allow-large-delete
+                        -allow-large-delete; then embed the chunks that have no
+                        embedding from the current model, with the Ollama server
+                        at OLLAMA_HOST
 `
+
+// newEmbedder returns the embedding provider configured by the environment.
+type newEmbedder func(getenv func(string) string) (embed.Embedder, error)
+
+// ollamaFromEnv is the provider of the command.
+func ollamaFromEnv(getenv func(string) string) (embed.Embedder, error) {
+	return ollama.FromEnv(getenv)
+}
 
 // errUsage marks command-line mistakes, reported with exit code 2.
 var errUsage = errors.New("invalid usage")
@@ -44,7 +59,7 @@ var errUsage = errors.New("invalid usage")
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if err := run(ctx, os.Args[1:], os.Getenv, os.Stdout); err != nil {
+	if err := run(ctx, os.Args[1:], os.Getenv, os.Stdout, ollamaFromEnv); err != nil {
 		fmt.Fprintln(os.Stderr, "ingest:", err)
 		if errors.Is(err, errUsage) {
 			fmt.Fprint(os.Stderr, usage)
@@ -54,7 +69,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
+func run(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer, embedder newEmbedder) error {
 	if len(args) == 0 {
 		return fmt.Errorf("%w: missing command", errUsage)
 	}
@@ -65,7 +80,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 		}
 		return migrate(ctx, getenv, stdout)
 	case "srd":
-		return srdCommand(ctx, args[1:], getenv, stdout)
+		return srdCommand(ctx, args[1:], getenv, stdout, embedder)
 	default:
 		return fmt.Errorf("%w: unknown command %q", errUsage, args[0])
 	}
