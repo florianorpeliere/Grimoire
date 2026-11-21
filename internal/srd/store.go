@@ -45,6 +45,10 @@ type StoreResult struct {
 // column differs. It returns no row when the stored row already matches.
 // xmax is 0 only on a row version created by an insert, which tells a new
 // row from an updated one.
+//
+// The embedding is kept unless the text it was computed from (embedInput:
+// path and text, the latter identified by its hash) changed, in which case
+// it is cleared for Embed to compute again.
 const upsertChunk = `
 INSERT INTO srd_chunks (id, path, full_path, title, kind, text, content_hash, srd_version)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -55,13 +59,19 @@ ON CONFLICT (id) DO UPDATE SET
 	kind = EXCLUDED.kind,
 	text = EXCLUDED.text,
 	content_hash = EXCLUDED.content_hash,
-	srd_version = EXCLUDED.srd_version
+	srd_version = EXCLUDED.srd_version,
+	embedding = CASE WHEN ` + sameEmbedInput + ` THEN srd_chunks.embedding END,
+	embedding_model = CASE WHEN ` + sameEmbedInput + ` THEN srd_chunks.embedding_model END,
+	embedding_dim = CASE WHEN ` + sameEmbedInput + ` THEN srd_chunks.embedding_dim END
 WHERE (srd_chunks.path, srd_chunks.full_path, srd_chunks.title, srd_chunks.kind,
        srd_chunks.text, srd_chunks.content_hash, srd_chunks.srd_version)
 	IS DISTINCT FROM
       (EXCLUDED.path, EXCLUDED.full_path, EXCLUDED.title, EXCLUDED.kind,
        EXCLUDED.text, EXCLUDED.content_hash, EXCLUDED.srd_version)
 RETURNING xmax = 0`
+
+// sameEmbedInput is true when an update leaves the embedding input unchanged.
+const sameEmbedInput = `(srd_chunks.path, srd_chunks.content_hash) IS NOT DISTINCT FROM (EXCLUDED.path, EXCLUDED.content_hash)`
 
 // deleteMissing deletes the rows whose id is not in $1.
 const deleteMissing = `DELETE FROM srd_chunks WHERE id <> ALL($1)`

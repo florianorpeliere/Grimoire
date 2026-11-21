@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/florianorpeliere/grimoire/internal/db"
+	"github.com/florianorpeliere/grimoire/internal/embed"
 	"github.com/florianorpeliere/grimoire/internal/srd"
 )
 
@@ -23,12 +24,16 @@ const largeChunkTokens = 4000
 // sizeBuckets are the upper bounds (estimated tokens) of the size distribution.
 var sizeBuckets = []int{100, 250, 500, 1000, 2000, 4000}
 
-// codeUndefinedTable is the SQLSTATE of a query on a missing table.
-const codeUndefinedTable = "42P01"
+// SQLSTATEs of a query on a missing table or column: a migration is missing.
+const (
+	codeUndefinedTable  = "42P01"
+	codeUndefinedColumn = "42703"
+)
 
 // srdCommand runs "ingest srd": with -dry-run it prints the chunk report,
-// otherwise it stores the chunks in the database at DATABASE_URL.
-func srdCommand(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
+// otherwise it stores the chunks in the database at DATABASE_URL and embeds
+// them with the provider newEmbedder returns.
+func srdCommand(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer, newEmbedder newEmbedder) error {
 	fs := flag.NewFlagSet("srd", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	dryRun := fs.Bool("dry-run", false, "print the chunk report without touching the database")
@@ -64,6 +69,10 @@ func srdCommand(ctx context.Context, args []string, getenv func(string) string, 
 	if err != nil {
 		return err
 	}
+	embedder, err := newEmbedder(getenv)
+	if err != nil {
+		return err
+	}
 	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	conn, err := db.Open(pingCtx, url)
@@ -71,14 +80,81 @@ func srdCommand(ctx context.Context, args []string, getenv func(string) string, 
 		return err
 	}
 	defer conn.Close()
-	return storeChunks(ctx, conn, path, chunks, srd.StoreOptions{AllowLargeDelete: *allowLargeDelete}, stdout)
+	if err := storeChunks(ctx, conn, path, chunks, srd.StoreOptions{AllowLargeDelete: *allowLargeDelete}, stdout); err != nil {
+		return err
+	}
+	return embedChunks(ctx, conn, embedder, stdout)
+}
+
+// embedChunks embeds the stored chunks that need it and prints what it did,
+// how long it took and the rows per embedding model. It fails when, after a
+// run, a row has no embedding from the provider's model: a search mixing two
+// models' vectors, or missing rows, would be wrong without any error.
+func embedChunks(ctx context.Context, conn *sql.DB, e embed.Embedder, stdout io.Writer) error {
+	start := time.Now()
+	res, err := srd.Embed(ctx, conn, e, srd.EmbedBatchSize)
+	elapsed := time.Since(start).Round(time.Millisecond)
+	if errors.Is(err, srd.ErrNoEmbeddingColumn) {
+		return fmt.Errorf("%w (run \"ingest migrate\" first)", err)
+	}
+	models, countErr := srd.EmbeddingModels(ctx, conn)
+	if err != nil {
+		if res.Embedded > 0 {
+			fmt.Fprintf(stdout, "embeddings: %d chunks embedded before the error, kept for the next run\n", res.Embedded)
+		}
+		if countErr == nil {
+			writeModels(stdout, models)
+		}
+		return err
+	}
+	if countErr != nil {
+		return countErr
+	}
+	total := 0
+	for _, m := range models {
+		total += m.Rows
+	}
+	if total > res.Kept {
+		fmt.Fprintf(stdout, "embeddings: model %s, %d dimensions\n", e.Model(), e.Dimension())
+	} else {
+		fmt.Fprintln(stdout, "embeddings: nothing to embed, provider not contacted")
+	}
+	fmt.Fprintf(stdout, "embedded %d, kept %d, in %s\n", res.Embedded, res.Kept, elapsed)
+	writeModels(stdout, models)
+	if other := total - rowsOf(models, e.Model()); other > 0 {
+		return fmt.Errorf("embeddings incomplete: %d of %d chunks have no embedding from %s (changed during the run?); run \"ingest srd\" again",
+			other, total, e.Model())
+	}
+	return nil
+}
+
+// writeModels prints the rows per embedding model.
+func writeModels(w io.Writer, models []srd.ModelRows) {
+	fmt.Fprintln(w, "rows per embedding model:")
+	for _, m := range models {
+		name := m.Model
+		if name == "" {
+			name = "(none)"
+		}
+		fmt.Fprintf(w, "  %s %d\n", name, m.Rows)
+	}
+}
+
+// rowsOf returns the rows embedded by model.
+func rowsOf(models []srd.ModelRows, model string) int {
+	for _, m := range models {
+		if m.Model == model {
+			return m.Rows
+		}
+	}
+	return 0
 }
 
 // storeChunks stores chunks and prints what changed and the rows stored.
 func storeChunks(ctx context.Context, conn *sql.DB, path string, chunks []srd.Chunk, opts srd.StoreOptions, stdout io.Writer) error {
 	res, err := srd.Store(ctx, conn, srd.Version, chunks, opts)
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == codeUndefinedTable {
+	if errors.As(err, &pgErr) && (pgErr.Code == codeUndefinedTable || pgErr.Code == codeUndefinedColumn) {
 		return fmt.Errorf("%w (run \"ingest migrate\" first)", err)
 	}
 	if errors.Is(err, srd.ErrLargeDelete) {
