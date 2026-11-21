@@ -32,6 +32,21 @@ var fixtures = []srd.Chunk{
 		Text: "A beam of yellow light flashes from you, then condenses at a chosen point as a glowing bead.",
 	},
 	{
+		// Named "Shield", but its text never says the word.
+		ID: "spells.shield", Path: []string{"Spells", "Shield"},
+		FullPath: []string{"Spells", "Spell Descriptions", "Shield"},
+		Title:    "Shield", Kind: srd.KindSpell,
+		Text: "An imperceptible barrier of magical force protects you until the start of your next turn.",
+	},
+	{
+		// Outranks Shield for "shield" on rank alone: title and text say it.
+		ID: "spells.fire-shield", Path: []string{"Spells", "Fire Shield"},
+		FullPath: []string{"Spells", "Spell Descriptions", "Fire Shield"},
+		Title:    "Fire Shield", Kind: srd.KindSpell,
+		Text: "Wispy flames wreathe your body. The shield sheds light, and the shield protects you; " +
+			"a creature that hits you takes damage from the shield.",
+	},
+	{
 		ID: "rules-glossary.grappled", Path: []string{"Rules Glossary", "Grappled"},
 		FullPath: []string{"Rules Glossary", "Rules Definitions", "Grappled"},
 		Title:    "Grappled", Kind: srd.KindCondition,
@@ -81,6 +96,7 @@ func TestKeyword(t *testing.T) {
 		{name: "exact spell name, punctuated", query: "fireball?", wantFirst: "spells.fireball", notInText: "fireball"},
 		{name: "spell name in a question", query: "What is Fireball?", wantFirst: "spells.fireball", notInText: "fireball"},
 		{name: "spell name after a stop word", query: "the fireball", wantFirst: "spells.fireball", notInText: "fireball"},
+		{name: "exact name above a higher-ranked chunk", query: "Shield", wantFirst: "spells.shield", notInText: "shield"},
 		{name: "longer spell name", query: "Delayed Blast Fireball", wantFirst: "spells.delayed-blast-fireball", notInText: "fireball"},
 		{name: "name in a question", query: "What happens when I am Grappled?", wantFirst: "rules-glossary.grappled", notInText: "grappled"},
 		{name: "word only in the short path", query: "toolbox", wantFirst: "gameplay-toolbox.traps.collapsing-roof", notInText: "toolbox"},
@@ -111,7 +127,9 @@ func TestKeyword(t *testing.T) {
 			if hasWord(got[0].Text, tt.notInText) {
 				t.Errorf("fixture text of %q contains %q: the test does not show what it claims", got[0].ID, tt.notInText)
 			}
-			for i := 1; i < len(got); i++ {
+			// No fixture title is shared, so only the first result can be
+			// placed ahead of its rank, by the exact-title key.
+			for i := 2; i < len(got); i++ {
 				if got[i].Rank > got[i-1].Rank {
 					t.Errorf("results not ranked: %q (%g) after %q (%g)", got[i].ID, got[i].Rank, got[i-1].ID, got[i-1].Rank)
 				}

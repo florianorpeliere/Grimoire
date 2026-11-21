@@ -55,11 +55,15 @@ const rankWeights = "{0.1, 0.2, 0.2, 1.0}"
 // chunks by how many words match and where. English stop words ("the", "can")
 // are dropped, including from the title and path lookup.
 //
-// Equal ranks are ordered by the number of distinct words in the title,
-// fewest first, then by id: "Fireball" and "Delayed Blast Fireball" match
-// the title equally and get the same rank (neither text says "Fireball"), and
-// the chunk whose title the query covers best comes first, also when the name
-// is inside a question ("What is Fireball?").
+// Order: a chunk whose title is the whole query (same words, any case or
+// punctuation) comes first, even above higher-ranked chunks: for "Shield",
+// Fire Shield and Animated Shield say "shield" in their text and outrank the
+// Shield spell, whose text does not. Then by rank. Equal ranks are ordered by
+// the number of distinct words in the title, fewest first, then by id:
+// "Fireball" and "Delayed Blast Fireball" get the same rank (neither text says
+// "Fireball"), and the title the query covers best comes first, also when the
+// name is inside a question ("What is Fireball?"), where the exact-title key
+// does not apply.
 const keywordQuery = `
 WITH words AS (
 	SELECT plainto_tsquery('simple', w) || plainto_tsquery('english', w) AS q
@@ -71,11 +75,13 @@ WITH words AS (
 SELECT c.id, c.path, c.kind, c.text, ts_rank('` + rankWeights + `', c.search, query.q) AS rank
 FROM srd_chunks c, query
 WHERE c.search @@ query.q
-ORDER BY rank DESC, length(to_tsvector('simple', c.title)), c.id
+ORDER BY to_tsvector('simple', c.title) = to_tsvector('simple', $1) DESC,
+	rank DESC, length(to_tsvector('simple', c.title)), c.id
 LIMIT $2`
 
 // Keyword returns at most limit SRD chunks matching the words of query, best
-// first: by full-text rank, then shortest title, then id. A query with no
+// first: a chunk whose title is exactly the query, then by full-text rank,
+// then fewest title words, then id. A query with no
 // searchable word (empty, or only stop words) returns no result. A query
 // longer than MaxQueryBytes is refused with ErrQueryTooLong.
 func Keyword(ctx context.Context, conn *sql.DB, query string, limit int) ([]Result, error) {
