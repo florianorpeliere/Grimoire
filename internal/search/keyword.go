@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/florianorpeliere/grimoire/internal/srd"
 )
 
 // Result is one chunk found by a search.
@@ -15,8 +17,17 @@ type Result struct {
 	Path string // short citation path, e.g. "Spells > Fireball"
 	Kind string
 	Text string
-	Rank float64 // full-text relevance; only comparable within one search
+	// Rank is the relevance given by the method that found the chunk:
+	// ts_rank for Keyword, cosine similarity for Vector. It is only
+	// comparable within one search.
+	Rank float64
 }
+
+// excludedKind is never returned by any search: the Legal Information
+// chapter is the licence text, never a rules passage. Attribution is served
+// by ATTRIBUTION.md, not by search. Both rankers exclude it in SQL, so a
+// licence chunk never takes a candidate slot from a rules passage.
+const excludedKind = string(srd.KindLegal)
 
 // MaxQueryBytes is the longest query Keyword accepts, in bytes. It bounds the
 // number of words, and the query time grows faster than linearly with it
@@ -74,15 +85,15 @@ WITH words AS (
 )
 SELECT c.id, c.path, c.kind, c.text, ts_rank('` + rankWeights + `', c.search, query.q) AS rank
 FROM srd_chunks c, query
-WHERE c.search @@ query.q
+WHERE c.search @@ query.q AND c.kind <> '` + excludedKind + `'
 ORDER BY to_tsvector('simple', c.title) = to_tsvector('simple', $1) DESC,
 	rank DESC, length(to_tsvector('simple', c.title)), c.id
 LIMIT $2`
 
-// Keyword returns at most limit SRD chunks matching the words of query, best
-// first: a chunk whose title is exactly the query, then by full-text rank,
-// then fewest title words, then id. A query with no
-// searchable word (empty, or only stop words) returns no result. A query
+// Keyword returns at most limit SRD chunks matching the words of query,
+// except Legal Information chunks, best first: a chunk whose title is
+// exactly the query, then by full-text rank, then fewest title words, then
+// id. A query with no searchable word (empty, or only stop words) returns no result. A query
 // longer than MaxQueryBytes is refused with ErrQueryTooLong.
 func Keyword(ctx context.Context, conn *sql.DB, query string, limit int) ([]Result, error) {
 	if limit < 1 {
