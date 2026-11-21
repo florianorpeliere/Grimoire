@@ -96,15 +96,25 @@ func (h Hit) FoundBy() Method {
 }
 
 // Fuse merges a keyword and a vector ranking, each best first, by reciprocal
-// rank fusion with constant k, and returns at most limit hits. A chunk found
-// by both methods appears once, with both ranks.
+// rank fusion with constant k, and returns at most limit hits. Each input
+// list is expected to contain an id at most once. A chunk found by both
+// methods appears once, with both ranks.
+//
+// k must be 0 or more (0 scores rank r as 1/r) and limit 1 or more:
+// otherwise Fuse returns ErrBadOptions or ErrBadLimit, nothing is clamped.
 //
 // Order: score, highest first. Equal scores are ordered by keyword rank (found
 // by keyword before not found, better rank first), then vector rank, then id.
 // Keyword goes first because it ranks an exact title first (see Keyword):
 // with "Fireball", the keyword first and a different vector first tie at
 // 1/(k+1), and the named spell should win.
-func Fuse(keyword, vector []Result, k, limit int) []Hit {
+func Fuse(keyword, vector []Result, k, limit int) ([]Hit, error) {
+	if k < 0 {
+		return nil, fmt.Errorf("%w: k = %d", ErrBadOptions, k)
+	}
+	if limit < 1 {
+		return nil, ErrBadLimit
+	}
 	byID := make(map[string]*Hit, len(keyword)+len(vector))
 	var hits []*Hit
 	add := func(r Result, rank int, set func(*Hit)) {
@@ -135,7 +145,7 @@ func Fuse(keyword, vector []Result, k, limit int) []Hit {
 	for _, h := range hits[:min(limit, len(hits))] {
 		out = append(out, *h)
 	}
-	return out
+	return out, nil
 }
 
 // compareRank orders 1-based ranks, best first, with 0 (not found) last.
@@ -186,5 +196,5 @@ func Hybrid(ctx context.Context, conn *sql.DB, e embed.Embedder, question string
 	if err != nil {
 		return nil, err
 	}
-	return Fuse(keyword, vector, opts.K, opts.Limit), nil
+	return Fuse(keyword, vector, opts.K, opts.Limit)
 }

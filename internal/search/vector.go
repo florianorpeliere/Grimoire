@@ -68,12 +68,12 @@ func Vector(ctx context.Context, conn *sql.DB, model string, vec []float32, limi
 		return nil, fmt.Errorf("vector search: %w", err)
 	}
 	if len(results) == 0 {
-		var any bool
+		var embedded bool
 		if err := conn.QueryRowContext(ctx,
-			"SELECT EXISTS (SELECT 1 FROM srd_chunks WHERE embedding_model = $1)", model).Scan(&any); err != nil {
+			"SELECT EXISTS (SELECT 1 FROM srd_chunks WHERE embedding_model = $1)", model).Scan(&embedded); err != nil {
 			return nil, fmt.Errorf("vector search: %w", err)
 		}
-		if !any {
+		if !embedded {
 			return nil, fmt.Errorf("%w: model %s (embed the SRD with it first: ingest srd)", ErrNoEmbeddings, model)
 		}
 	}

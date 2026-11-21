@@ -114,6 +114,15 @@ func TestFuse(t *testing.T) {
 			},
 		},
 		{
+			name:    "k = 0 is accepted",
+			keyword: results("a"),
+			vector:  results("b", "a"),
+			k:       0, limit: 1,
+			want: []want{
+				{id: "a", kwRank: 1, vecRank: 2, foundBy: search.ByBoth, scoreDivisor: []int{1, 2}},
+			},
+		},
+		{
 			name:    "k changes the order",
 			keyword: results("a", "b", "c"),
 			vector:  results("c"),
@@ -128,7 +137,10 @@ func TestFuse(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := search.Fuse(tt.keyword, tt.vector, tt.k, tt.limit)
+			got, err := search.Fuse(tt.keyword, tt.vector, tt.k, tt.limit)
+			if err != nil {
+				t.Fatalf("Fuse: %v", err)
+			}
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %d hits %v, want %d", len(got), hitIDs(got), len(tt.want))
 			}
@@ -146,6 +158,30 @@ func TestFuse(t *testing.T) {
 				if h.Path != "path "+w.id || h.Text != "text "+w.id || h.Kind != "rule" {
 					t.Errorf("hit %d fields = %q %q %q, not those of %s", i, h.Path, h.Kind, h.Text, w.id)
 				}
+			}
+		})
+	}
+}
+
+func TestFuseRefuses(t *testing.T) {
+	tests := []struct {
+		name     string
+		k, limit int
+		wantErr  error
+	}{
+		{name: "negative k", k: -1, limit: 8, wantErr: search.ErrBadOptions},
+		{name: "k below minus one", k: -61, limit: 8, wantErr: search.ErrBadOptions},
+		{name: "zero limit", k: 60, limit: 0, wantErr: search.ErrBadLimit},
+		{name: "negative limit", k: 60, limit: -1, wantErr: search.ErrBadLimit},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := search.Fuse(results("a"), results("b"), tt.k, tt.limit)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("err = %v, want %v", err, tt.wantErr)
+			}
+			if got != nil {
+				t.Errorf("got hits %v, want none", hitIDs(got))
 			}
 		})
 	}
