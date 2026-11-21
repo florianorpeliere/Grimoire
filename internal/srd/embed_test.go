@@ -71,6 +71,7 @@ func TestEmbed(t *testing.T) {
 	newFullPath := fireball // same text, path and hash, other full heading path
 	newFullPath.FullPath = []string{"Spells", "Evocation", "Fireball"}
 	long := spell("wish", "Wish", strings.Repeat("Wish is the mightiest spell. ", 20))
+	web := spell("web", "Web", "You conjure a mass of sticky webbing.") // in the batch of long
 
 	v1 := &embedtest.Fake{ModelName: "model-a", Dim: 1024}
 	v2 := &embedtest.Fake{ModelName: "model-b", Dim: 1024}
@@ -136,13 +137,13 @@ func TestEmbed(t *testing.T) {
 			stored:   map[string]embedMeta{"spells.fireball": b, "spells.light": b, "spells.shield": b},
 		},
 		{
-			name:   "too-long chunk: reported with its size, not truncated, the others embedded",
-			chunks: []srd.Chunk{newFullPath, newText, newPath, long}, embedder: short,
-			want:    srd.EmbedResult{Embedded: 0, Kept: 3},
+			name:   "too-long chunk: reported with its size, not truncated, the other chunk of its batch embedded",
+			chunks: []srd.Chunk{newFullPath, newText, newPath, long, web}, embedder: short,
+			want:    srd.EmbedResult{Embedded: 1, Kept: 3},
 			wantErr: embed.ErrInputTooLong, wantErrText: "1 chunks not embedded (id, estimated tokens = characters / 4): spells.wish (149)",
-			// The batch, then the one chunk to embed, alone.
-			wantSent: []string{"spells.wish", "spells.wish"},
-			stored:   map[string]embedMeta{"spells.fireball": b, "spells.light": b, "spells.shield": b, "spells.wish": {}},
+			// The batch of web and wish, refused, then each chunk alone.
+			wantSent: []string{"spells.web", "spells.web", "spells.wish", "spells.wish"},
+			stored:   map[string]embedMeta{"spells.fireball": b, "spells.light": b, "spells.shield": b, "spells.web": b, "spells.wish": {}},
 		},
 	}
 	for _, s := range steps {
@@ -158,13 +159,13 @@ func TestEmbed(t *testing.T) {
 			}
 			s.embedder.Reset()
 			got, err := srd.Embed(ctx, conn, s.embedder, 2)
+			if got != s.want {
+				t.Errorf("result = %+v, want %+v", got, s.want)
+			}
 			switch {
 			case s.wantErr == nil && s.wantErrText == "":
 				if err != nil {
 					t.Fatalf("Embed: %v", err)
-				}
-				if got != s.want {
-					t.Errorf("result = %+v, want %+v", got, s.want)
 				}
 			case err == nil:
 				t.Fatalf("Embed: no error, want %v %q", s.wantErr, s.wantErrText)

@@ -86,8 +86,10 @@ func srdCommand(ctx context.Context, args []string, getenv func(string) string, 
 	return embedChunks(ctx, conn, embedder, stdout)
 }
 
-// embedChunks embeds the stored chunks that need it and prints what it did
-// and how long it took.
+// embedChunks embeds the stored chunks that need it and prints what it did,
+// how long it took and the rows per embedding model. It fails when, after a
+// run, a row has no embedding from the provider's model: a search mixing two
+// models' vectors, or missing rows, would be wrong without any error.
 func embedChunks(ctx context.Context, conn *sql.DB, e embed.Embedder, stdout io.Writer) error {
 	start := time.Now()
 	res, err := srd.Embed(ctx, conn, e, srd.EmbedBatchSize)
@@ -95,15 +97,57 @@ func embedChunks(ctx context.Context, conn *sql.DB, e embed.Embedder, stdout io.
 	if errors.Is(err, srd.ErrNoEmbeddingColumn) {
 		return fmt.Errorf("%w (run \"ingest migrate\" first)", err)
 	}
+	models, countErr := srd.EmbeddingModels(ctx, conn)
 	if err != nil {
 		if res.Embedded > 0 {
 			fmt.Fprintf(stdout, "embeddings: %d chunks embedded before the error, kept for the next run\n", res.Embedded)
 		}
+		if countErr == nil {
+			writeModels(stdout, models)
+		}
 		return err
 	}
-	fmt.Fprintf(stdout, "embeddings: model %s, %d dimensions\n", e.Model(), e.Dimension())
+	if countErr != nil {
+		return countErr
+	}
+	total := 0
+	for _, m := range models {
+		total += m.Rows
+	}
+	if total > res.Kept {
+		fmt.Fprintf(stdout, "embeddings: model %s, %d dimensions\n", e.Model(), e.Dimension())
+	} else {
+		fmt.Fprintln(stdout, "embeddings: nothing to embed, provider not contacted")
+	}
 	fmt.Fprintf(stdout, "embedded %d, kept %d, in %s\n", res.Embedded, res.Kept, elapsed)
+	writeModels(stdout, models)
+	if other := total - rowsOf(models, e.Model()); other > 0 {
+		return fmt.Errorf("embeddings incomplete: %d of %d chunks have no embedding from %s (changed during the run?); run \"ingest srd\" again",
+			other, total, e.Model())
+	}
 	return nil
+}
+
+// writeModels prints the rows per embedding model.
+func writeModels(w io.Writer, models []srd.ModelRows) {
+	fmt.Fprintln(w, "rows per embedding model:")
+	for _, m := range models {
+		name := m.Model
+		if name == "" {
+			name = "(none)"
+		}
+		fmt.Fprintf(w, "  %s %d\n", name, m.Rows)
+	}
+}
+
+// rowsOf returns the rows embedded by model.
+func rowsOf(models []srd.ModelRows, model string) int {
+	for _, m := range models {
+		if m.Model == model {
+			return m.Rows
+		}
+	}
+	return 0
 }
 
 // storeChunks stores chunks and prints what changed and the rows stored.

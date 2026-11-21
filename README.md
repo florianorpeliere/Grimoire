@@ -105,7 +105,8 @@ short citation path, a blank line, then its text. Each row stores its embedding 
 no ANN index: search scans them all), the model name and the dimension. Only the chunks without
 an embedding from the current model are embedded: a chunk whose path and text are unchanged
 keeps its embedding, so a second run embeds nothing. It prints how many chunks were embedded and
-kept, and how long it took.
+kept, how long it took, and the rows per embedding model. When there is nothing to embed, the
+provider is not contacted.
 
 - Long input is never truncated: every call asks for an 8,192-token context (the model supports
   32,768; Ollama's default is 4,096) and sets `truncate` to false, so Ollama refuses an input
@@ -115,6 +116,13 @@ kept, and how long it took.
   A persistent error makes the command exit non-zero with Ollama's message; the chunks embedded
   before it are kept.
 - A provider dimension other than the column's makes the command fail before embedding anything.
+- Mixed models: batches are committed one at a time, so a run interrupted during a change of model
+  leaves rows from both models until a run succeeds. Their vectors are not comparable, so **a
+  vector search must only use the rows whose `embedding_model` is the configured model**. The run
+  fails if, at its end, a row has no embedding from the current model (for example because its
+  text changed during the run); run it again.
+- `embedding_model` stores the Ollama tag (`qwen3-embedding:0.6b`), not the model digest:
+  re-pulling a different model under the same tag is not detected.
 
 ## Build and test
 

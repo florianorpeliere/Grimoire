@@ -27,9 +27,26 @@ func noEmbedder(t *testing.T) newEmbedder {
 	}
 }
 
-// fakeEmbedder makes the command use f.
-func fakeEmbedder(f *embedtest.Fake) newEmbedder {
-	return func(func(string) string) (embed.Embedder, error) { return f, nil }
+// fakeEmbedder makes the command use e.
+func fakeEmbedder(e embed.Embedder) newEmbedder {
+	return func(func(string) string) (embed.Embedder, error) { return e, nil }
+}
+
+// racingEmbedder changes the text of a stored chunk while it embeds, as a
+// concurrent "ingest srd" would.
+type racingEmbedder struct {
+	*embedtest.Fake
+	conn *sql.DB
+	id   string
+}
+
+func (r racingEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if _, err := r.conn.ExecContext(ctx, `UPDATE srd_chunks
+SET text = text || ' (edited)', content_hash = 'edited', embedding = NULL, embedding_model = NULL, embedding_dim = NULL
+WHERE id = $1`, r.id); err != nil {
+		return nil, err
+	}
+	return r.Fake.Embed(ctx, texts)
 }
 
 // writeFixture writes dryRunFixture to a temporary file and returns its path.
@@ -166,14 +183,16 @@ func TestSRDStore(t *testing.T) {
 	fake := &embedtest.Fake{ModelName: "fake-model", Dim: 1024}
 	failing := &embedtest.Fake{ModelName: "fake-model", Dim: 1024, Err: errors.New("model exploded")}
 	narrow := &embedtest.Fake{ModelName: "narrow-model", Dim: 8}
+	racing := racingEmbedder{Fake: fake, conn: conn, id: "spells.fireball"}
 
 	// Each step runs on the database left by the previous one.
 	steps := []struct {
 		name     string
 		args     []string
-		embedder *embedtest.Fake // fake when nil
+		embedder embed.Embedder // fake when nil
 		wantErr  string
-		wantOut  []string
+		// wantOut lists parts of the output, checked also when an error is expected.
+		wantOut []string
 		// wantEmbedded lists the ids whose input the provider received, in order.
 		wantEmbedded []string
 	}{
@@ -188,6 +207,7 @@ func TestSRDStore(t *testing.T) {
 			args:     []string{"srd", path},
 			embedder: failing,
 			wantErr:  "model exploded",
+			wantOut:  []string{"rows per embedding model:\n  (none) 2\n"},
 		},
 		{
 			name:     "provider dimension differs from the column: refused before embedding",
@@ -198,18 +218,31 @@ func TestSRDStore(t *testing.T) {
 		{
 			name:         "first full run: every chunk embedded",
 			args:         []string{"srd", path},
-			wantOut:      []string{"chunks: 2\n", "inserted 0, updated 0, unchanged 2, deleted 0\n", "rows stored: 2\n", "embeddings: model fake-model, 1024 dimensions\n", "embedded 2, kept 0, in "},
+			wantOut:      []string{"chunks: 2\n", "inserted 0, updated 0, unchanged 2, deleted 0\n", "rows stored: 2\n", "embeddings: model fake-model, 1024 dimensions\n", "embedded 2, kept 0, in ", "rows per embedding model:\n  fake-model 2\n"},
 			wantEmbedded: []string{"spells.casting-spells.spell-level", "spells.fireball"},
 		},
 		{
 			name:    "second run: nothing re-inserted nor re-embedded",
 			args:    []string{"srd", path},
-			wantOut: []string{"chunks: 2\n", "inserted 0, updated 0, unchanged 2, deleted 0\n", "rows stored: 2\n", "embedded 0, kept 2, in "},
+			wantOut: []string{"chunks: 2\n", "inserted 0, updated 0, unchanged 2, deleted 0\n", "rows stored: 2\n", "embeddings: nothing to embed, provider not contacted\n", "embedded 0, kept 2, in "},
 		},
 		{
 			name:         "changed chunk: only it is embedded again",
 			args:         []string{"srd", changed},
 			wantOut:      []string{"inserted 0, updated 1, unchanged 1, deleted 0\n", "embedded 1, kept 1, in "},
+			wantEmbedded: []string{"spells.fireball"},
+		},
+		{
+			name:     "chunk changed during the run: not embedded from the old text, the run fails",
+			args:     []string{"srd", path},
+			embedder: racing,
+			wantErr:  `embeddings incomplete: 1 of 2 chunks have no embedding from fake-model (changed during the run?); run "ingest srd" again`,
+			wantOut:  []string{"embedded 0, kept 1, in ", "rows per embedding model:\n  (none) 1\n  fake-model 1\n"},
+		},
+		{
+			name:         "next run: the changed chunk is embedded",
+			args:         []string{"srd", changed},
+			wantOut:      []string{"inserted 0, updated 1, unchanged 1, deleted 0\n", "embedded 1, kept 1, in ", "rows per embedding model:\n  fake-model 2\n"},
 			wantEmbedded: []string{"spells.fireball"},
 		},
 		{
@@ -232,6 +265,11 @@ func TestSRDStore(t *testing.T) {
 			fake.Reset()
 			var out bytes.Buffer
 			err := run(ctx, s.args, getenv, &out, fakeEmbedder(e))
+			for _, line := range s.wantOut {
+				if !strings.Contains(out.String(), line) {
+					t.Errorf("output has no %q:\n%s", line, out.String())
+				}
+			}
 			if s.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), s.wantErr) {
 					t.Fatalf("err = %v, want it to contain %q", err, s.wantErr)
@@ -240,11 +278,6 @@ func TestSRDStore(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("run: %v", err)
-			}
-			for _, line := range s.wantOut {
-				if !strings.Contains(out.String(), line) {
-					t.Errorf("output has no %q:\n%s", line, out.String())
-				}
 			}
 			var got []string
 			for _, text := range fake.Texts() {

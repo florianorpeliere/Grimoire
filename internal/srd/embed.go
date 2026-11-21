@@ -44,6 +44,11 @@ func embedInput(path, text string) string { return path + "\n\n" + text }
 // are embedded, so a failed run keeps its progress. Chunks too long for the
 // model are not truncated: they are reported together in the error, with
 // their estimated size, after the other chunks are embedded.
+//
+// Because batches commit one at a time, a run interrupted during a change of
+// model leaves rows of both models side by side, until a run succeeds. Their
+// vectors are not comparable: a search must only use the rows whose
+// embedding_model is the configured model (see EmbeddingModels).
 func Embed(ctx context.Context, conn *sql.DB, e embed.Embedder, batchSize int) (EmbedResult, error) {
 	if batchSize < 1 {
 		batchSize = EmbedBatchSize
@@ -69,6 +74,9 @@ func Embed(ctx context.Context, conn *sql.DB, e embed.Embedder, batchSize int) (
 		res.Embedded += n
 		tooLong = append(tooLong, long...)
 		if err != nil {
+			if len(tooLong) > 0 {
+				err = fmt.Errorf("%w (also too long for the model, not embedded: %s)", err, strings.Join(tooLong, ", "))
+			}
 			return res, err
 		}
 	}
@@ -77,6 +85,35 @@ func Embed(ctx context.Context, conn *sql.DB, e embed.Embedder, batchSize int) (
 			embed.ErrInputTooLong, len(tooLong), strings.Join(tooLong, ", "))
 	}
 	return res, nil
+}
+
+// ModelRows is the number of stored chunks embedded by one model. Model is ""
+// for the chunks without an embedding.
+type ModelRows struct {
+	Model string
+	Rows  int
+}
+
+// EmbeddingModels counts the stored chunks per embedding model, by model name.
+func EmbeddingModels(ctx context.Context, conn *sql.DB) ([]ModelRows, error) {
+	rows, err := conn.QueryContext(ctx, `
+SELECT coalesce(embedding_model, ''), count(*) FROM srd_chunks GROUP BY 1 ORDER BY 1`)
+	if err != nil {
+		return nil, fmt.Errorf("count embeddings per model: %w", err)
+	}
+	defer rows.Close()
+	var out []ModelRows
+	for rows.Next() {
+		var m ModelRows
+		if err := rows.Scan(&m.Model, &m.Rows); err != nil {
+			return nil, fmt.Errorf("count embeddings per model: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("count embeddings per model: %w", err)
+	}
+	return out, nil
 }
 
 // pending is a stored chunk to embed.
