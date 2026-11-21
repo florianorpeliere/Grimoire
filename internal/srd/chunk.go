@@ -36,6 +36,9 @@ import (
 // relative to the repository root.
 const DefaultPath = "data/srd/SRD_CC_v5.2.1.md"
 
+// Version is the SRD version of the pinned source, stored with each chunk.
+const Version = "5.2.1"
+
 var (
 	// ErrUnknownChapter is returned for a chapter (h1) title missing from the split table.
 	ErrUnknownChapter = errors.New("chapter title not in the split table")

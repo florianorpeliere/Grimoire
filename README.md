@@ -75,6 +75,25 @@ DATABASE_URL="postgres://USER@localhost:5433/grimoire_test?sslmode=disable" make
 
 Running it again when the database is up to date applies nothing and exits 0.
 
+## SRD ingestion
+
+Get the SRD Markdown with `scripts/srd-download.sh` (see [docs/srd-source.md](docs/srd-source.md)),
+apply the migrations, then:
+
+```sh
+make srd-dry-run   # chunk report only, no database
+make srd           # store the chunks in the database at DATABASE_URL
+```
+
+`make srd` upserts the chunks into the `srd_chunks` table by id and deletes the stored chunks
+that are no longer in the file, so running it again on the same file changes nothing. It prints
+how many chunks were inserted, updated, unchanged and deleted, and the number of rows stored.
+A run that would delete more than 5% of the stored chunks (a truncated or wrong file) changes
+nothing and fails; if the deletions are intended, run
+`go run ./cmd/ingest srd -allow-large-delete [file]`.
+The table has a full-text index over each chunk's title, short citation path and text, used by
+the keyword search in `internal/search`.
+
 ## Build and test
 
 ```sh
@@ -103,8 +122,9 @@ Use `go test -v ./...` to see which tests were skipped and why.
 ## Layout
 
 ```
-cmd/ingest/        database migrations, SRD chunking dry run
+cmd/ingest/        database migrations, SRD chunking dry run and storage
 internal/db/       connection and embedded migrations
-internal/srd/      SRD Markdown split into chunks (see docs/srd-chunking.md)
+internal/srd/      SRD Markdown split into chunks (see docs/srd-chunking.md), and their storage
+internal/search/   keyword (full-text) search over the SRD chunks
 internal/dbtest/   helpers for integration tests
 ```
