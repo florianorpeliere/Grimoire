@@ -67,6 +67,23 @@ and adapt `DATABASE_URL`.
    them, uncomment it in `.env` or set it for one run (see [Build and test](#build-and-test)).
    It follows the same rules and must point at `grimoire_test`.
 
+## End to end, from a clean checkout
+
+After the [local setup](#local-setup-macos-homebrew) above, the shortest path to a question:
+
+```sh
+brew services start postgresql@17      # PostgreSQL on port 5433
+ollama serve                           # in another terminal, unless the Ollama app is running
+set -a; . ./.env; set +a               # DATABASE_URL and OLLAMA_HOST
+make migrate                           # create the schema
+scripts/srd-download.sh                # SRD Markdown into data/srd/
+make srd                               # store the SRD chunks and embed them with Ollama
+go run ./cmd/ask "Fireball"            # print the SRD passages found
+```
+
+Each step is detailed below: [Migrations](#migrations), [SRD ingestion](#srd-ingestion),
+[Ask a rules question](#ask-a-rules-question).
+
 ## Migrations
 
 Migrations live in `internal/db/migrations` and are applied with [goose](https://github.com/pressly/goose),
@@ -124,6 +141,34 @@ provider is not contacted.
 - `embedding_model` stores the Ollama tag (`qwen3-embedding:0.6b`), not the model digest:
   re-pulling a different model under the same tag is not detected.
 
+## Ask a rules question
+
+`cmd/ask` runs the hybrid search (keyword and vector, merged by reciprocal rank fusion) over
+the SRD chunks in the database at `DATABASE_URL` and prints the passages found, best first. It
+generates no answer and calls no text-generation API: it is for judging retrieval.
+
+```sh
+go run ./cmd/ask "Fireball"
+go run ./cmd/ask -json -limit 5 "can I hit someone who walks away from me"
+go run ./cmd/ask -h      # all flags, and the JSON fields
+```
+
+- Each passage shows its rank, chunk id, citation path, kind, the method(s) that found it
+  (`keyword`, `vector` or `both`), its rank in each method's list ("not found" when that method
+  did not find it), and an excerpt (the JSON output has the full text). The search latency is
+  printed too, as a measurement.
+- The question is embedded by the Ollama server at `OLLAMA_HOST` with the Qwen3 query
+  instruction (prefix on) by default; `-no-prefix` embeds it as it is. This default lives in the
+  command's flags; `search.Options` keeps `Prefix: false` as its zero value.
+- `-limit n` sets the number of passages (default 8).
+- `-method keyword` or `-method vector` runs one method only, for debugging; `keyword` needs no
+  Ollama.
+- `-json` prints one JSON object, documented in `go run ./cmd/ask -h`, for the eval tooling.
+  Keep its fields stable.
+- It exits 1 with a message when the question is longer than 1,000 bytes, the database or
+  Ollama is unreachable, the migrations were not applied, no SRD chunk was ingested, or no chunk
+  has an embedding from the configured model; 2 for a usage error (such as an empty question).
+
 ## Build and test
 
 ```sh
@@ -161,6 +206,7 @@ Use `go test -v ./...` to see which tests were skipped and why.
 
 ```
 cmd/ingest/        database migrations, SRD chunking dry run, storage and embedding
+cmd/ask/           ask a rules question, print the SRD passages found (no answer generation)
 internal/db/       connection and embedded migrations
 internal/srd/      SRD Markdown split into chunks (see docs/srd-chunking.md), their storage and embeddings
 internal/embed/    embedding provider interface; ollama/ is the Ollama provider, embedtest/ a fake
