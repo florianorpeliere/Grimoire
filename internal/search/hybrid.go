@@ -20,10 +20,19 @@ const (
 	DefaultLimit      = 8  // results returned
 )
 
+// DefaultPrefix is whether callers embed questions with the Qwen3 query
+// instruction (see QueryText) unless told otherwise: the ask command and the
+// retrieval checks use it as their default, so they search the same way
+// (decided 2026-11-21). Options.Prefix keeps false as its zero value: set
+// it from DefaultPrefix explicitly.
+const DefaultPrefix = true
+
 // ErrBadOptions is returned for a negative option.
 var ErrBadOptions = errors.New("search options must not be negative")
 
-// Options configures Hybrid. A zero field takes its default.
+// Options configures Hybrid. A zero K, Candidates or Limit takes its
+// default. Hybrid returns at most 2 × Candidates hits, whatever Limit: each
+// method contributes at most Candidates chunks.
 type Options struct {
 	K          int  // reciprocal rank fusion constant; default DefaultK
 	Candidates int  // results asked from each method; default DefaultCandidates
