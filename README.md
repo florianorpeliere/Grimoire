@@ -155,19 +155,24 @@ go run ./cmd/ask -h      # all flags, and the JSON fields
 
 - Each passage shows its rank, chunk id, citation path, kind, the method(s) that found it
   (`keyword`, `vector` or `both`), its rank in each method's list ("not found" when that method
-  did not find it), and an excerpt (the JSON output has the full text). The search latency is
-  printed too, as a measurement.
+  did not find it, "not searched" when that method did not run), and an excerpt (the JSON output
+  has the full text). The search latency is printed too, as a measurement.
 - The question is embedded by the Ollama server at `OLLAMA_HOST` with the Qwen3 query
-  instruction (prefix on) by default; `-no-prefix` embeds it as it is. This default lives in the
-  command's flags; `search.Options` keeps `Prefix: false` as its zero value.
-- `-limit n` sets the number of passages (default 8).
+  instruction (prefix on) by default; `-no-prefix` embeds it as it is. The default is
+  `search.DefaultPrefix`, shared with the retrieval checks; `search.Options` keeps `Prefix: false`
+  as its zero value, so callers set it explicitly.
+- `-limit n` sets the number of passages (default 8). Hybrid returns at most 40 passages
+  (2 × 20 candidates: each method contributes at most 20 chunks), whatever the limit; the output
+  says so when the limit is higher.
 - `-method keyword` or `-method vector` runs one method only, for debugging; `keyword` needs no
   Ollama.
 - `-json` prints one JSON object, documented in `go run ./cmd/ask -h`, for the eval tooling.
-  Keep its fields stable.
+  Keep its fields stable. It states the methods that ran (`searched`), the requested and
+  effective limits, and the fusion constant `k` and `candidates` used.
 - It exits 1 with a message when the question is longer than 1,000 bytes, the database or
   Ollama is unreachable, the migrations were not applied, no SRD chunk was ingested, or no chunk
   has an embedding from the configured model; 2 for a usage error (such as an empty question).
+  Errors go to stderr as plain text, also with `-json`: check the exit status.
 
 ## Build and test
 
@@ -210,6 +215,6 @@ cmd/ask/           ask a rules question, print the SRD passages found (no answer
 internal/db/       connection and embedded migrations
 internal/srd/      SRD Markdown split into chunks (see docs/srd-chunking.md), their storage and embeddings
 internal/embed/    embedding provider interface; ollama/ is the Ollama provider, embedtest/ a fake
-internal/search/   keyword (full-text) search over the SRD chunks
+internal/search/   hybrid search over the SRD chunks: keyword (full-text), vector, and their fusion
 internal/dbtest/   helpers for integration tests
 ```

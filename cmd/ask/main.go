@@ -5,8 +5,7 @@
 // embedding server at OLLAMA_HOST.
 //
 // The question is embedded with the Qwen3 query instruction by default
-// (search.QueryText); -no-prefix turns it off. This default lives here, in
-// the command's flags: search.Options keeps Prefix false as its zero value.
+// (search.DefaultPrefix, see search.QueryText); -no-prefix turns it off.
 // See usage for the flags and the JSON output.
 package main
 
@@ -22,19 +21,18 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/florianorpeliere/grimoire/internal/db"
 	"github.com/florianorpeliere/grimoire/internal/embed"
 	"github.com/florianorpeliere/grimoire/internal/embed/ollama"
 	"github.com/florianorpeliere/grimoire/internal/search"
 )
-
-// defaultPrefix is decided by Florian (2026-11-21): questions are embedded
-// with the query instruction unless -no-prefix is given.
-const defaultPrefix = true
 
 // excerptRunes is the length of the passage excerpt in the plain-text output.
 // The JSON output always has the full text.
@@ -51,12 +49,14 @@ var usage = fmt.Sprintf(`usage: ask [flags] "question"
 
 Searches the SRD chunks in the database at DATABASE_URL for the question and
 prints the passages found, best first. The question is embedded by the
-Ollama server at OLLAMA_HOST (model %s);
+Ollama server at OLLAMA_HOST (model %[1]s);
 -method keyword needs no Ollama. Flags go before the question; quote the
 question.
 
 flags:
-  -limit n      number of passages (default %d)
+  -limit n      number of passages (default %[2]d). Hybrid returns at most
+                %[3]d (2 x %[5]d candidates): each method contributes at most
+                %[5]d chunks
   -no-prefix    embed the question as it is; by default it is embedded with
                 the Qwen3 query instruction (prefix on)
   -method m     hybrid (default), keyword or vector; keyword and vector run
@@ -64,30 +64,39 @@ flags:
   -json         print JSON instead of plain text
 
 JSON output (one object):
-  question     the question
-  method       "hybrid", "keyword" or "vector"
-  prefix       true if the question was embedded with the query instruction
-               (always false for keyword, which embeds nothing)
-  model        the embedding model, "" for keyword
-  limit        the number of passages asked for
-  latency_ms   time taken by the search, in milliseconds (embedding the
-               question included, connecting to the database excluded)
-  results      the passages, best first; [] when none was found. Each has:
+  question         the question
+  method           "hybrid", "keyword" or "vector"
+  searched         the methods that ran: ["keyword", "vector"] for hybrid,
+                   ["keyword"] or ["vector"] otherwise
+  prefix           true if the question was embedded with the query
+                   instruction (always false for keyword, which embeds nothing)
+  model            the embedding model, "" for keyword
+  limit            the number of passages asked for (-limit)
+  effective_limit  the most passages the search can return: limit, or for
+                   hybrid min(limit, 2 x candidates)
+  k                reciprocal rank fusion constant (%[4]d); 0 unless hybrid
+  candidates       results asked from each method (%[5]d); 0 unless hybrid
+  latency_ms       time taken by the search, in milliseconds (embedding the
+                   question included, connecting to the database excluded)
+  results          the passages, best first; [] when none was found. Each has:
     rank          1-based position in the results
     id            chunk id, e.g. "spells.fireball"
     path          citation path, e.g. "Spells > Fireball"
     kind          chunk kind, e.g. "spell", "rule", "condition"
     found_by      "keyword", "vector" or "both"
-    keyword_rank  1-based rank in the keyword list, 0 if not found by it
-    vector_rank   1-based rank in the vector list, 0 if not found by it
+    keyword_rank  1-based rank in the keyword list; 0 if not found by it, or
+                  if keyword is not in searched
+    vector_rank   1-based rank in the vector list; 0 if not found by it, or
+                  if vector is not in searched
     score         hybrid: reciprocal rank fusion score; keyword: full-text
                   rank; vector: cosine similarity. Comparable only within
                   one search.
     text          the full passage text
 
+Errors go to stderr as plain text, also with -json: check the exit status.
 Exit status: 0 on success, also when no passage is found; 1 on error; 2 on
 a usage error.
-`, ollama.Model, search.DefaultLimit)
+`, ollama.Model, search.DefaultLimit, 2*search.DefaultCandidates, search.DefaultK, search.DefaultCandidates)
 
 // errUsage marks command-line mistakes, reported with exit code 2.
 var errUsage = errors.New("invalid usage")
@@ -142,7 +151,7 @@ func parseArgs(args []string) (config, error) {
 	var c config
 	var noPrefix bool
 	fs.IntVar(&c.limit, "limit", search.DefaultLimit, "")
-	fs.BoolVar(&noPrefix, "no-prefix", !defaultPrefix, "")
+	fs.BoolVar(&noPrefix, "no-prefix", !search.DefaultPrefix, "")
 	fs.StringVar(&c.method, "method", methodHybrid, "")
 	fs.BoolVar(&c.json, "json", false, "")
 	if err := fs.Parse(args); err != nil {
@@ -199,19 +208,20 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	defer cancel()
 	conn, err := db.Open(pingCtx, dbURL)
 	if err != nil {
-		return fmt.Errorf("cannot reach the database at %s (is PostgreSQL running?): %w", db.EnvURL, err)
+		return explainDB(err)
 	}
 	defer conn.Close()
 	if err := checkChunks(ctx, conn); err != nil {
 		return err
 	}
 
-	r := report{Question: c.question, Method: c.method, Prefix: c.prefix, Limit: c.limit}
+	var model string
 	if e != nil {
-		r.Model = e.Model()
+		model = e.Model()
 	}
+	r := newReport(c, model)
 	start := time.Now()
-	hits, err := searchHits(ctx, conn, e, c)
+	hits, err := searchHits(ctx, conn, e, r)
 	r.latency = time.Since(start)
 	if err != nil {
 		return explain(ctx, err)
@@ -243,25 +253,26 @@ func checkChunks(ctx context.Context, conn *sql.DB) error {
 	return nil
 }
 
-// searchHits runs the method of c. A single method's results become hits
-// with that method's rank only, and its own relevance as score.
-func searchHits(ctx context.Context, conn *sql.DB, e embed.Embedder, c config) ([]search.Hit, error) {
-	switch c.method {
+// searchHits runs the search described by r. A single method's results
+// become hits with that method's rank only, and its own relevance as score.
+func searchHits(ctx context.Context, conn *sql.DB, e embed.Embedder, r report) ([]search.Hit, error) {
+	switch r.Method {
 	case methodKeyword:
-		rs, err := search.Keyword(ctx, conn, c.question, c.limit)
+		rs, err := search.Keyword(ctx, conn, r.Question, r.Limit)
 		return single(rs, search.ByKeyword), err
 	case methodVector:
-		vecs, err := e.Embed(ctx, []string{search.QueryText(c.question, c.prefix)})
+		vecs, err := e.Embed(ctx, []string{search.QueryText(r.Question, r.Prefix)})
 		if err != nil {
 			return nil, fmt.Errorf("embed the question: %w", err)
 		}
 		if len(vecs) != 1 {
 			return nil, fmt.Errorf("embed the question: got %d vectors, want 1", len(vecs))
 		}
-		rs, err := search.Vector(ctx, conn, e.Model(), vecs[0], c.limit)
+		rs, err := search.Vector(ctx, conn, e.Model(), vecs[0], r.Limit)
 		return single(rs, search.ByVector), err
 	default:
-		return search.Hybrid(ctx, conn, e, c.question, search.Options{Limit: c.limit, Prefix: c.prefix})
+		return search.Hybrid(ctx, conn, e, r.Question,
+			search.Options{K: r.K, Candidates: r.Candidates, Limit: r.Limit, Prefix: r.Prefix})
 	}
 }
 
@@ -287,18 +298,57 @@ func explain(ctx context.Context, err error) error {
 	return err
 }
 
+// explainDB adds a hint to a failed connection when the server could not be
+// reached. When the server answered and refused (a missing database, failed
+// authentication), its error says why, and PostgreSQL is running.
+func explainDB(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return fmt.Errorf("the database server at %s refused the connection: %w", db.EnvURL, err)
+	}
+	return fmt.Errorf("cannot reach the database at %s (is PostgreSQL running?): %w", db.EnvURL, err)
+}
+
 // report is the output of one search, printed as text or JSON. Its JSON
 // form is documented in usage: keep both in step.
 type report struct {
-	Question  string   `json:"question"`
-	Method    string   `json:"method"`
-	Prefix    bool     `json:"prefix"`
-	Model     string   `json:"model"`
-	Limit     int      `json:"limit"`
-	LatencyMS float64  `json:"latency_ms"`
-	Results   []result `json:"results"`
+	Question       string   `json:"question"`
+	Method         string   `json:"method"`
+	Searched       []string `json:"searched"`
+	Prefix         bool     `json:"prefix"`
+	Model          string   `json:"model"`
+	Limit          int      `json:"limit"`
+	EffectiveLimit int      `json:"effective_limit"`
+	K              int      `json:"k"`
+	Candidates     int      `json:"candidates"`
+	LatencyMS      float64  `json:"latency_ms"`
+	Results        []result `json:"results"`
 
 	latency time.Duration
+}
+
+// newReport describes the search c asks for, with every option explicit:
+// hybrid runs with search.DefaultK and search.DefaultCandidates.
+func newReport(c config, model string) report {
+	r := report{Question: c.question, Method: c.method, Prefix: c.prefix, Model: model,
+		Limit: c.limit, EffectiveLimit: c.limit}
+	switch c.method {
+	case methodKeyword:
+		r.Searched = []string{methodKeyword}
+	case methodVector:
+		r.Searched = []string{methodVector}
+	default:
+		r.Searched = []string{methodKeyword, methodVector}
+		r.K = search.DefaultK
+		r.Candidates = search.DefaultCandidates
+		r.EffectiveLimit = min(c.limit, 2*r.Candidates)
+	}
+	return r
+}
+
+// searched says whether method ran.
+func (r report) searched(method string) bool {
+	return slices.Contains(r.Searched, method)
 }
 
 type result struct {
@@ -339,15 +389,23 @@ func writeJSON(w io.Writer, r report) error {
 func writeText(w io.Writer, r report) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Question: %s\n", r.Question)
+	limit := fmt.Sprintf("limit %d", r.Limit)
+	if r.EffectiveLimit != r.Limit {
+		limit += fmt.Sprintf(" (at most %d: 2 x %d candidates)", r.EffectiveLimit, r.Candidates)
+	}
 	switch r.Method {
 	case methodKeyword:
-		fmt.Fprintf(&b, "Method: keyword, limit %d\n", r.Limit)
+		fmt.Fprintf(&b, "Method: keyword, %s\n", limit)
 	default:
 		prefix := "off"
 		if r.Prefix {
 			prefix = "on"
 		}
-		fmt.Fprintf(&b, "Method: %s, prefix %s, model %s, limit %d\n", r.Method, prefix, r.Model, r.Limit)
+		fmt.Fprintf(&b, "Method: %s, prefix %s, model %s, %s", r.Method, prefix, r.Model, limit)
+		if r.Method == methodHybrid {
+			fmt.Fprintf(&b, ", k %d, candidates %d", r.K, r.Candidates)
+		}
+		b.WriteString("\n")
 	}
 	fmt.Fprintf(&b, "Search latency: %d ms\n", r.latency.Milliseconds())
 	if len(r.Results) == 0 {
@@ -358,16 +416,21 @@ func writeText(w io.Writer, r report) error {
 		fmt.Fprintf(&b, "   Path: %s\n", res.Path)
 		fmt.Fprintf(&b, "   Kind: %s\n", res.Kind)
 		fmt.Fprintf(&b, "   Found by: %s (keyword rank: %s, vector rank: %s)\n",
-			res.FoundBy, rankText(res.KeywordRank), rankText(res.VectorRank))
+			res.FoundBy, rankText(res.KeywordRank, r.searched(methodKeyword)),
+			rankText(res.VectorRank, r.searched(methodVector)))
 		fmt.Fprintf(&b, "   %s\n", excerpt(res.Text, excerptRunes))
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
 }
 
-// rankText shows a 1-based rank, or "not found" for 0.
-func rankText(rank int) string {
-	if rank == 0 {
+// rankText shows a 1-based rank, "not found" for 0, or "not searched" when
+// the method did not run.
+func rankText(rank int, searched bool) string {
+	switch {
+	case !searched:
+		return "not searched"
+	case rank == 0:
 		return "not found"
 	}
 	return fmt.Sprint(rank)

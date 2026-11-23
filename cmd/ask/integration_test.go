@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -174,8 +175,15 @@ func TestAskDatabase(t *testing.T) {
 		if got := r.Results[0]; got.FoundBy != "keyword" || got.KeywordRank != 1 || got.VectorRank != 0 {
 			t.Errorf("first result = %+v, want found by keyword at rank 1 only", got)
 		}
-		if r.Prefix || r.Model != "" {
-			t.Errorf("prefix = %v, model = %q, want false and empty for keyword", r.Prefix, r.Model)
+		if r.Prefix || r.Model != "" || !slices.Equal(r.Searched, []string{"keyword"}) || r.K != 0 || r.Candidates != 0 {
+			t.Errorf("report = %+v, want no prefix, no model, searched [keyword], k and candidates 0", r)
+		}
+		var out bytes.Buffer
+		if err := run(ctx, []string{"-method", "keyword", "Fireball"}, testEnv(nil), &out, noEmbedder(t)); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if w := "Found by: keyword (keyword rank: 1, vector rank: not searched)"; !strings.Contains(out.String(), w) {
+			t.Errorf("output does not contain %q:\n%s", w, out.String())
 		}
 	})
 
@@ -198,6 +206,8 @@ func TestAskDatabase(t *testing.T) {
 			wantMethod: methodHybrid, wantPrefix: false, wantLimit: search.DefaultLimit, wantFirst: "spells.fireball"},
 		{name: "hybrid, limit 1", args: []string{"-limit", "1", "Grappled"},
 			wantMethod: methodHybrid, wantPrefix: true, wantLimit: 1, wantFirst: "rules-glossary.grappled"},
+		{name: "hybrid, limit above 2 x candidates", args: []string{"-limit", "1000", "Fireball"},
+			wantMethod: methodHybrid, wantPrefix: true, wantLimit: 1000, wantFirst: "spells.fireball"},
 		{name: "vector", args: []string{"-method", "vector", "Fireball"},
 			wantMethod: methodVector, wantPrefix: true, wantLimit: search.DefaultLimit, wantFound: "vector"},
 	}
@@ -213,6 +223,16 @@ func TestAskDatabase(t *testing.T) {
 				r.Model != fake.ModelName || r.Limit != tt.wantLimit {
 				t.Errorf("report = %+v, want question %q, method %s, prefix %v, model %s, limit %d",
 					r, question, tt.wantMethod, tt.wantPrefix, fake.ModelName, tt.wantLimit)
+			}
+			c, err := parseArgs(tt.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := newReport(c, fake.ModelName)
+			if !slices.Equal(r.Searched, want.Searched) || r.EffectiveLimit != want.EffectiveLimit ||
+				r.K != want.K || r.Candidates != want.Candidates {
+				t.Errorf("searched %v, effective_limit %d, k %d, candidates %d; want %v, %d, %d, %d",
+					r.Searched, r.EffectiveLimit, r.K, r.Candidates, want.Searched, want.EffectiveLimit, want.K, want.Candidates)
 			}
 			if r.LatencyMS < 0 {
 				t.Errorf("latency_ms = %v, want 0 or more", r.LatencyMS)
@@ -248,7 +268,7 @@ func TestAskDatabase(t *testing.T) {
 			t.Fatalf("run: %v", err)
 		}
 		for _, w := range []string{
-			"Question: Fireball\n", "Method: hybrid, prefix on, model fake-model, limit 8\n", "Search latency: ",
+			"Question: Fireball\n", fmt.Sprintf("Method: hybrid, prefix on, model fake-model, limit 8, k %d, candidates %d\n", search.DefaultK, search.DefaultCandidates), "Search latency: ",
 			"\n1. spells.fireball\n   Path: Spells > Fireball\n   Kind: spell\n   Found by: ",
 		} {
 			if !strings.Contains(out.String(), w) {
@@ -256,6 +276,35 @@ func TestAskDatabase(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A server that answers and refuses (here, a missing database) gets no
+// "is PostgreSQL running?" hint. Only a connection is attempted: nothing is
+// created.
+func TestAskDatabaseRefused(t *testing.T) {
+	dbtest.Open(t) // skips without TEST_DATABASE_URL, fails if it is unusable
+	u, err := url.Parse(os.Getenv(dbtest.EnvURL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Path = "/grimoire_test_does_not_exist"
+	env := func(k string) string {
+		if k == db.EnvURL {
+			return u.String()
+		}
+		return ""
+	}
+	var out bytes.Buffer
+	err = run(context.Background(), []string{"-method", "keyword", "Fireball"}, env, &out, noEmbedder(t))
+	if err == nil {
+		t.Fatal("err = nil, want a refused connection")
+	}
+	if want := "the database server at DATABASE_URL refused the connection"; !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("err = %q, want it to start with %q", err, want)
+	}
+	if strings.Contains(err.Error(), "is PostgreSQL running?") {
+		t.Errorf("err = %q, want no hint that PostgreSQL is down", err)
+	}
 }
 
 // TestAskLive runs the command with the real Ollama server on the fixtures.

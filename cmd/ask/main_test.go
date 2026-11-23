@@ -7,12 +7,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/url"
 	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/florianorpeliere/grimoire/internal/db"
 	"github.com/florianorpeliere/grimoire/internal/embed"
@@ -32,17 +35,17 @@ func TestParseArgs(t *testing.T) {
 		wantMsg string // substring of the error message
 	}{
 		{name: "defaults", args: []string{"Fireball"},
-			want: config{question: "Fireball", limit: search.DefaultLimit, prefix: true, method: methodHybrid}},
+			want: config{question: "Fireball", limit: search.DefaultLimit, prefix: search.DefaultPrefix, method: methodHybrid}},
 		{name: "no prefix", args: []string{"-no-prefix", "Fireball"},
 			want: config{question: "Fireball", limit: search.DefaultLimit, prefix: false, method: methodHybrid}},
 		{name: "limit and json, double dash", args: []string{"--limit", "3", "--json", "Fireball"},
-			want: config{question: "Fireball", limit: 3, prefix: true, method: methodHybrid, json: true}},
+			want: config{question: "Fireball", limit: 3, prefix: search.DefaultPrefix, method: methodHybrid, json: true}},
 		{name: "vector keeps the prefix", args: []string{"-method", "vector", "Fireball"},
-			want: config{question: "Fireball", limit: search.DefaultLimit, prefix: true, method: methodVector}},
+			want: config{question: "Fireball", limit: search.DefaultLimit, prefix: search.DefaultPrefix, method: methodVector}},
 		{name: "keyword embeds nothing", args: []string{"-method", "keyword", "Fireball"},
 			want: config{question: "Fireball", limit: search.DefaultLimit, prefix: false, method: methodKeyword}},
 		{name: "question of exactly the limit", args: []string{full},
-			want: config{question: full, limit: search.DefaultLimit, prefix: true, method: methodHybrid}},
+			want: config{question: full, limit: search.DefaultLimit, prefix: search.DefaultPrefix, method: methodHybrid}},
 		{name: "help", args: []string{"-h"}, wantErr: flag.ErrHelp},
 		{name: "no question", args: nil, wantErr: errUsage, wantMsg: "the question is missing"},
 		{name: "empty question", args: []string{""}, wantErr: errUsage, wantMsg: "the question is empty"},
@@ -203,7 +206,48 @@ var sampleHits = []search.Hit{
 		Score: 0.0161, VectorRank: 1},
 }
 
+func TestNewReport(t *testing.T) {
+	maxHybrid := 2 * search.DefaultCandidates
+	tests := []struct {
+		name string
+		c    config
+		want report
+	}{
+		{name: "hybrid", c: config{question: "q", method: methodHybrid, limit: 8, prefix: true},
+			want: report{Question: "q", Method: methodHybrid, Searched: []string{"keyword", "vector"}, Prefix: true, Model: "m",
+				Limit: 8, EffectiveLimit: 8, K: search.DefaultK, Candidates: search.DefaultCandidates}},
+		{name: "hybrid, limit at the cap", c: config{question: "q", method: methodHybrid, limit: maxHybrid},
+			want: report{Question: "q", Method: methodHybrid, Searched: []string{"keyword", "vector"}, Model: "m",
+				Limit: maxHybrid, EffectiveLimit: maxHybrid, K: search.DefaultK, Candidates: search.DefaultCandidates}},
+		{name: "hybrid, limit above the cap", c: config{question: "q", method: methodHybrid, limit: 1000},
+			want: report{Question: "q", Method: methodHybrid, Searched: []string{"keyword", "vector"}, Model: "m",
+				Limit: 1000, EffectiveLimit: maxHybrid, K: search.DefaultK, Candidates: search.DefaultCandidates}},
+		{name: "keyword, no cap", c: config{question: "q", method: methodKeyword, limit: 1000},
+			want: report{Question: "q", Method: methodKeyword, Searched: []string{"keyword"}, Model: "m",
+				Limit: 1000, EffectiveLimit: 1000}},
+		{name: "vector, no cap", c: config{question: "q", method: methodVector, limit: 1000, prefix: true},
+			want: report{Question: "q", Method: methodVector, Searched: []string{"vector"}, Prefix: true, Model: "m",
+				Limit: 1000, EffectiveLimit: 1000}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := newReport(tt.c, "m"); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got  %+v\nwant %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// withResults returns r with hits as its results and a latency.
+func withResults(r report, hits []search.Hit, latency time.Duration) report {
+	r.Results = toResults(hits)
+	r.latency = latency
+	return r
+}
+
 func TestWriteText(t *testing.T) {
+	keywordHit := []search.Hit{{ID: "spells.fireball", Path: "Spells > Fireball", Kind: "spell", Text: "x", KeywordRank: 1}}
+	vectorHit := []search.Hit{{ID: "spells.fireball", Path: "Spells > Fireball", Kind: "spell", Text: "x", VectorRank: 1}}
 	tests := []struct {
 		name    string
 		r       report
@@ -212,29 +256,42 @@ func TestWriteText(t *testing.T) {
 	}{
 		{
 			name: "hybrid",
-			r: report{Question: "Fireball", Method: methodHybrid, Prefix: true, Model: "m", Limit: 8,
-				Results: toResults(sampleHits), latency: 42 * time.Millisecond},
+			r: withResults(newReport(config{question: "Fireball", method: methodHybrid, limit: 8, prefix: true}, "m"),
+				sampleHits, 42*time.Millisecond),
 			want: []string{
 				"Question: Fireball\n",
-				"Method: hybrid, prefix on, model m, limit 8\n",
+				fmt.Sprintf("Method: hybrid, prefix on, model m, limit 8, k %d, candidates %d\n", search.DefaultK, search.DefaultCandidates),
 				"Search latency: 42 ms\n",
 				"\n1. spells.fireball\n   Path: Spells > Fireball\n   Kind: spell\n" +
 					"   Found by: both (keyword rank: 1, vector rank: 2)\n   A bright streak flashes.\n",
 				"\n2. rules-glossary.grappled\n",
 				"   Found by: vector (keyword rank: not found, vector rank: 1)\n",
 			},
-			notWant: []string{"No passage found."},
+			notWant: []string{"No passage found.", "not searched", "at most"},
 		},
 		{
-			name: "prefix off",
-			r:    report{Question: "q", Method: methodVector, Model: "m", Limit: 3},
-			want: []string{"Method: vector, prefix off, model m, limit 3\n", "\nNo passage found.\n"},
+			name: "hybrid, limit above the cap",
+			r:    newReport(config{question: "q", method: methodHybrid, limit: 1000, prefix: true}, "m"),
+			want: []string{fmt.Sprintf("limit 1000 (at most %d: 2 x %d candidates), k %d",
+				2*search.DefaultCandidates, search.DefaultCandidates, search.DefaultK)},
 		},
 		{
-			name:    "keyword shows no prefix or model",
-			r:       report{Question: "q", Method: methodKeyword, Limit: 8},
-			want:    []string{"Method: keyword, limit 8\n"},
-			notWant: []string{"prefix", "model"},
+			name: "vector, prefix off, keyword not searched",
+			r:    withResults(newReport(config{question: "q", method: methodVector, limit: 3}, "m"), vectorHit, 0),
+			want: []string{"Method: vector, prefix off, model m, limit 3\n",
+				"   Found by: vector (keyword rank: not searched, vector rank: 1)\n"},
+			notWant: []string{"not found", "candidates"},
+		},
+		{
+			name:    "keyword, vector not searched",
+			r:       withResults(newReport(config{question: "q", method: methodKeyword, limit: 1000}, ""), keywordHit, 0),
+			want:    []string{"Method: keyword, limit 1000\n", "   Found by: keyword (keyword rank: 1, vector rank: not searched)\n"},
+			notWant: []string{"prefix", "model", "not found", "at most"},
+		},
+		{
+			name: "no passage",
+			r:    newReport(config{question: "q", method: methodKeyword, limit: 8}, ""),
+			want: []string{"\nNo passage found.\n"},
 		},
 	}
 	for _, tt := range tests {
@@ -264,17 +321,20 @@ func TestWriteJSON(t *testing.T) {
 		want string
 	}{
 		{
-			name: "hits",
-			r: report{Question: "Fireball", Method: methodHybrid, Prefix: true, Model: "m", Limit: 8,
-				Results: toResults(sampleHits[:1]), latency: 42*time.Millisecond + 360*time.Microsecond},
-			want: `{"question":"Fireball","method":"hybrid","prefix":true,"model":"m","limit":8,"latency_ms":42.4,` +
-				`"results":[{"rank":1,"id":"spells.fireball","path":"Spells > Fireball","kind":"spell","found_by":"both",` +
+			name: "hybrid",
+			r: withResults(newReport(config{question: "Fireball", method: methodHybrid, limit: 1000, prefix: true}, "m"),
+				sampleHits[:1], 42*time.Millisecond+360*time.Microsecond),
+			want: fmt.Sprintf(`{"question":"Fireball","method":"hybrid","searched":["keyword","vector"],"prefix":true,"model":"m",`+
+				`"limit":1000,"effective_limit":%d,"k":%d,"candidates":%d,"latency_ms":42.4,`+
+				`"results":[{"rank":1,"id":"spells.fireball","path":"Spells > Fireball","kind":"spell","found_by":"both",`+
 				`"keyword_rank":1,"vector_rank":2,"score":0.0325,"text":"A bright streak\nflashes."}]}`,
+				2*search.DefaultCandidates, search.DefaultK, search.DefaultCandidates),
 		},
 		{
-			name: "no hit is an empty list",
-			r:    report{Question: "q", Method: methodKeyword, Limit: 8},
-			want: `{"question":"q","method":"keyword","prefix":false,"model":"","limit":8,"latency_ms":0,"results":[]}`,
+			name: "keyword, no hit is an empty list",
+			r:    newReport(config{question: "q", method: methodKeyword, limit: 8}, ""),
+			want: `{"question":"q","method":"keyword","searched":["keyword"],"prefix":false,"model":"",` +
+				`"limit":8,"effective_limit":8,"k":0,"candidates":0,"latency_ms":0,"results":[]}`,
 		},
 	}
 	for _, tt := range tests {
@@ -297,6 +357,36 @@ func TestWriteJSON(t *testing.T) {
 	}
 }
 
+func TestExplainDB(t *testing.T) {
+	dial := fmt.Errorf("reach database: %w", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")})
+	tests := []struct {
+		name    string
+		err     error
+		wantMsg string
+		hint    bool
+	}{
+		{name: "unreachable", err: dial, wantMsg: "cannot reach the database at DATABASE_URL (is PostgreSQL running?)", hint: true},
+		{name: "missing database", err: fmt.Errorf("reach database: %w", &pgconn.PgError{Code: "3D000", Message: `database "x" does not exist`}),
+			wantMsg: "the database server at DATABASE_URL refused the connection"},
+		{name: "failed authentication", err: fmt.Errorf("reach database: %w", &pgconn.PgError{Code: "28P01", Message: "password authentication failed"}),
+			wantMsg: "the database server at DATABASE_URL refused the connection"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := explainDB(tt.err)
+			if !errors.Is(got, tt.err) {
+				t.Errorf("explainDB does not wrap %v", tt.err)
+			}
+			if !strings.HasPrefix(got.Error(), tt.wantMsg) {
+				t.Errorf("err = %q, want it to start with %q", got, tt.wantMsg)
+			}
+			if hint := strings.Contains(got.Error(), "is PostgreSQL running?"); hint != tt.hint {
+				t.Errorf("hint shown = %v, want %v: %q", hint, tt.hint, got)
+			}
+		})
+	}
+}
+
 // The usage states the defaults and documents every JSON field.
 func TestUsage(t *testing.T) {
 	want := []string{
@@ -304,6 +394,8 @@ func TestUsage(t *testing.T) {
 		"by default it is embedded with\n                the Qwen3 query instruction (prefix on)",
 		"hybrid (default)",
 		ollama.Model,
+		fmt.Sprintf("Hybrid returns at most\n                %d (2 x %d candidates)", 2*search.DefaultCandidates, search.DefaultCandidates),
+		"Errors go to stderr as plain text, also with -json: check the exit status.",
 	}
 	for _, w := range want {
 		if !strings.Contains(usage, w) {
