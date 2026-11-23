@@ -47,9 +47,9 @@ of each expected chunk id, and the misses. Configurations:
 Questions are embedded by the Ollama server at OLLAMA_HOST.
 
 Exit status: 0 when every configuration ran, whatever the scores; 1 on error:
-an expected id that is not a stored chunk, an unreachable database, or an
-unreachable Ollama (the keyword results are printed first); 2 on a usage
-error.
+an expected id that is not a stored chunk, an unreachable database, or
+Ollama unset, unreachable or failing (the keyword results are printed
+first); 2 on a usage error.
 `, defaultSmokeFile, top)
 
 // errUsage marks command-line mistakes, reported with exit code 2.
@@ -137,16 +137,20 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 			file, len(unknown), strings.Join(unknown, ", "))
 	}
 
-	// Without Ollama, keyword still runs; the others are skipped and the run
-	// fails after printing the report.
+	// Without Ollama (not configured, unreachable, or failing), keyword still
+	// runs; the others are skipped and the run fails after printing the
+	// report.
 	e, ollamaErr := newEmbedder(getenv)
-	h := header{File: file, Top: top}
 	if ollamaErr == nil {
-		h.Model = e.Model()
+		e = taggedEmbedder{e}
 	}
 	results, err := runAll(ctx, qs, configs(conn, e), top, ollamaErr)
 	if err != nil {
 		return err
+	}
+	h := header{File: file, Top: top}
+	if ollamaReached(results) {
+		h.Model = e.Model()
 	}
 	if err := writeReport(stdout, h, qs, results); err != nil {
 		return err

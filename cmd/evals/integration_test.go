@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,19 +120,34 @@ func TestRetrievalDatabase(t *testing.T) {
 		}
 	})
 
-	t.Run("Ollama unreachable", func(t *testing.T) {
-		down := &embedtest.Fake{ModelName: "fake-model", Dim: 1024, Err: errRefused}
-		var out bytes.Buffer
-		err := run(ctx, []string{"retrieval", smoke}, testEnv, &out,
-			func(func(string) string) (embed.Embedder, error) { return down, nil })
-		if err == nil || !strings.Contains(err.Error(), "cannot use the Ollama server at OLLAMA_HOST") {
-			t.Fatalf("err = %v, want the Ollama server named", err)
-		}
-		got := strings.Join(strings.Fields(out.String()), " ")
-		for _, want := range []string{"keyword named 1/1 (100%)", "hybrid (skipped)", "vector (skipped)"} {
-			if !strings.Contains(got, want) {
-				t.Errorf("report has no %q:\n%s", want, out.String())
+	// Whatever the embedding error, keyword still runs and is reported, the
+	// Ollama configurations are skipped with the error, and the run fails.
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{name: "Ollama unreachable", err: errRefused},
+		{name: "Ollama returns an error", err: errModelMissing},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			down := &embedtest.Fake{ModelName: "fake-model", Dim: 1024, Err: tt.err}
+			var out bytes.Buffer
+			err := run(ctx, []string{"retrieval", smoke}, testEnv, &out,
+				func(func(string) string) (embed.Embedder, error) { return down, nil })
+			if err == nil || !strings.Contains(err.Error(), "cannot use the Ollama server at OLLAMA_HOST") ||
+				!errors.Is(err, tt.err) {
+				t.Fatalf("err = %v, want the Ollama server named and %v", err, tt.err)
 			}
-		}
-	})
+			got := strings.Join(strings.Fields(out.String()), " ")
+			for _, want := range []string{"keyword named 1/1 (100%)", "hybrid (skipped)", "vector (skipped)",
+				"Skipped because: question 1: embed the question: " + tt.err.Error()} {
+				if !strings.Contains(got, strings.Join(strings.Fields(want), " ")) {
+					t.Errorf("report has no %q:\n%s", want, out.String())
+				}
+			}
+			if strings.Contains(got, "Embedding model") {
+				t.Errorf("report names the embedding model although Ollama was not reached:\n%s", out.String())
+			}
+		})
+	}
 }

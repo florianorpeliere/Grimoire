@@ -9,6 +9,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/florianorpeliere/grimoire/internal/embed"
+	"github.com/florianorpeliere/grimoire/internal/embed/embedtest"
 )
 
 func TestScore(t *testing.T) {
@@ -28,6 +31,10 @@ func TestScore(t *testing.T) {
 			wantRanks: []int{2}, wantTop: []string{"a", "b", "c"}, wantHit: true},
 		{name: "beyond the top", expected: []string{"c"}, got: []string{"a", "b", "c"}, top: 2,
 			wantRanks: []int{0}, wantTop: []string{"a", "b"}},
+		{name: "rank 8 of top 8: hit", expected: []string{"h"}, got: []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}, top: 8,
+			wantRanks: []int{8}, wantTop: []string{"a", "b", "c", "d", "e", "f", "g", "h"}, wantHit: true},
+		{name: "rank 9 of top 8: miss", expected: []string{"i"}, got: []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}, top: 8,
+			wantRanks: []int{0}, wantTop: []string{"a", "b", "c", "d", "e", "f", "g", "h"}},
 		{name: "not found", expected: []string{"z"}, got: []string{"a"}, top: 8,
 			wantRanks: []int{0}, wantTop: []string{"a"}},
 		{name: "no result", expected: []string{"a"}, got: nil, top: 8,
@@ -112,7 +119,21 @@ func TestShare(t *testing.T) {
 var errRefused = fmt.Errorf("ollama: %w (tried 4 times)",
 	&url.Error{Op: "Post", URL: "http://127.0.0.1:1/api/embed", Err: errors.New("connect: connection refused")})
 
-func TestUnreachable(t *testing.T) {
+var errModelMissing = errors.New(`ollama: HTTP 404: model "qwen3-embedding:0.6b" not found, try pulling it first`)
+
+// embedding returns a search that embeds the question with e through
+// taggedEmbedder, as the Ollama configurations do, and finds "a".
+func embedding(e embed.Embedder) searchFunc {
+	te := taggedEmbedder{e}
+	return func(ctx context.Context, q string) ([]string, error) {
+		if _, err := te.Embed(ctx, []string{q}); err != nil {
+			return nil, fmt.Errorf("embed the question: %w", err)
+		}
+		return []string{"a"}, nil
+	}
+}
+
+func TestOllamaFailed(t *testing.T) {
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
 	tests := []struct {
@@ -121,23 +142,40 @@ func TestUnreachable(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{name: "connection refused", ctx: context.Background(), err: errRefused, want: true},
-		{name: "server error", ctx: context.Background(), err: errors.New("ollama: model not found"), want: false},
-		{name: "interrupted", ctx: canceled, err: errRefused, want: false},
+		{name: "connection refused", ctx: context.Background(), err: &embedError{errRefused}, want: true},
+		{name: "model missing", ctx: context.Background(), err: fmt.Errorf("embed the question: %w", &embedError{errModelMissing}), want: true},
+		{name: "database error", ctx: context.Background(), err: errors.New("relation does not exist"), want: false},
+		{name: "not from the embedder", ctx: context.Background(), err: errRefused, want: false},
+		{name: "interrupted", ctx: canceled, err: &embedError{errRefused}, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := unreachable(tt.ctx, tt.err); got != tt.want {
-				t.Errorf("unreachable = %v, want %v", got, tt.want)
+			if got := ollamaFailed(tt.ctx, tt.err); got != tt.want {
+				t.Errorf("ollamaFailed = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTaggedEmbedder(t *testing.T) {
+	ctx := context.Background()
+	ok := taggedEmbedder{&embedtest.Fake{ModelName: "m", Dim: 4}}
+	if vecs, err := ok.Embed(ctx, []string{"q"}); err != nil || len(vecs) != 1 {
+		t.Errorf("Embed = %d vectors, %v; want 1, nil", len(vecs), err)
+	}
+	failing := taggedEmbedder{&embedtest.Fake{ModelName: "m", Dim: 4, Err: errModelMissing}}
+	_, err := failing.Embed(ctx, []string{"q"})
+	var ee *embedError
+	if !errors.As(err, &ee) || !errors.Is(err, errModelMissing) || err.Error() != errModelMissing.Error() {
+		t.Errorf("Embed error = %#v, want an embedError wrapping %v with its message", err, errModelMissing)
 	}
 }
 
 func TestRunAll(t *testing.T) {
 	ctx := context.Background()
 	good := answers(map[string][]string{"q1": {"a"}, "q2": {"c"}, "q3": {"d"}, "q4": {"x"}})
-	refused := func(context.Context, string) ([]string, error) { return nil, errRefused }
+	refused := embedding(&embedtest.Fake{ModelName: "m", Dim: 4, Err: errRefused})
+	missing := embedding(&embedtest.Fake{ModelName: "m", Dim: 4, Err: errModelMissing})
 	broken := func(context.Context, string) ([]string, error) { return nil, errors.New("relation does not exist") }
 	mustNotRun := func(t *testing.T) searchFunc {
 		return func(context.Context, string) ([]string, error) {
@@ -180,6 +218,22 @@ func TestRunAll(t *testing.T) {
 			wantSkipErr: true,
 		},
 		{
+			name: "Ollama returns an error: the next Ollama configurations are skipped",
+			cfgs: func(t *testing.T) []config {
+				return []config{{Name: "hybrid", Ollama: true, Search: missing}, {Name: "keyword", Search: good},
+					{Name: "vector", Ollama: true, Search: mustNotRun(t)}}
+			},
+			wantSkipped: []string{"hybrid", "vector"},
+			wantSkipErr: true,
+		},
+		{
+			name: "a database error in an Ollama configuration stops the run",
+			cfgs: func(*testing.T) []config {
+				return []config{{Name: "keyword", Search: good}, {Name: "hybrid", Ollama: true, Search: broken}}
+			},
+			wantErr: "hybrid: question 1: relation does not exist",
+		},
+		{
 			name: "another search error stops the run",
 			cfgs: func(*testing.T) []config {
 				return []config{{Name: "keyword", Search: broken}}
@@ -187,9 +241,9 @@ func TestRunAll(t *testing.T) {
 			wantErr: "keyword: question 1: relation does not exist",
 		},
 		{
-			name: "an unreachable error without Ollama stops the run",
+			name: "an embedding error in a configuration without Ollama stops the run",
 			cfgs: func(*testing.T) []config {
-				return []config{{Name: "keyword", Search: refused}}
+				return []config{{Name: "keyword", Search: missing}}
 			},
 			wantErr: "keyword: question 1",
 		},

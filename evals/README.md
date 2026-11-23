@@ -40,8 +40,9 @@ in the top 8), and the misses of each configuration with their first result.
 
 There is no target and no threshold: a low score never fails the run. It exits 1 only on an
 error: a malformed file, an expected id that is not a stored chunk (all of them are listed), the
-database unreachable or not ingested, or Ollama unreachable or not configured. In that last case
-the keyword configuration still runs and its report is printed before the error.
+database unreachable or not ingested, or Ollama not configured, unreachable or returning an error
+(such as a model that is not pulled). In that last case the keyword configuration still runs, its
+report is printed with the other configurations marked skipped, then the run fails.
 
 ### File format
 

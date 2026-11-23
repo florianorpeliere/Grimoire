@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"slices"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/florianorpeliere/grimoire/internal/embed"
 )
 
 // searchFunc returns the ids of the chunks found for a question, best first.
@@ -51,18 +52,41 @@ type result struct {
 	Skipped  error     // why the configuration did not run
 }
 
-// unreachable reports whether err means the Ollama server could not be
-// reached (as opposed to an error it returned).
-func unreachable(ctx context.Context, err error) bool {
-	var urlErr *url.Error
-	return errors.As(err, &urlErr) && ctx.Err() == nil
+// embedError marks an error returned by the embedding provider, so that the
+// run can tell it from a database error.
+type embedError struct{ err error }
+
+func (e *embedError) Error() string { return e.err.Error() }
+func (e *embedError) Unwrap() error { return e.err }
+
+// taggedEmbedder wraps every Embed error in an embedError.
+type taggedEmbedder struct{ embed.Embedder }
+
+func (t taggedEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	vecs, err := t.Embedder.Embed(ctx, texts)
+	if err != nil {
+		return nil, &embedError{err}
+	}
+	return vecs, nil
+}
+
+// ollamaFailed reports whether err came from the embedding provider:
+// unreachable, model missing, server error. An interrupted run is not one.
+func ollamaFailed(ctx context.Context, err error) bool {
+	var ee *embedError
+	return errors.As(err, &ee) && ctx.Err() == nil
+}
+
+// ollamaReached reports whether a configuration that needs Ollama ran.
+func ollamaReached(results []result) bool {
+	return slices.ContainsFunc(results, func(r result) bool { return r.Config.Ollama && r.Skipped == nil })
 }
 
 // runAll runs every question through every configuration. ollamaErr, when
 // not nil, says why Ollama cannot be used: the configurations that need it
-// are skipped. An Ollama configuration that finds the server unreachable is
-// skipped too, with the ones after it (see skipped). Any other search error
-// stops the run.
+// are skipped. An Ollama configuration whose embedding fails (see
+// ollamaFailed) is skipped too, with the ones after it (see skipped). Any
+// other search error stops the run.
 func runAll(ctx context.Context, qs []question, cfgs []config, top int, ollamaErr error) ([]result, error) {
 	results := make([]result, 0, len(cfgs))
 	for _, c := range cfgs {
@@ -72,7 +96,7 @@ func runAll(ctx context.Context, qs []question, cfgs []config, top int, ollamaEr
 		}
 		outs, err := runConfig(ctx, qs, c, top)
 		if err != nil {
-			if c.Ollama && unreachable(ctx, err) {
+			if c.Ollama && ollamaFailed(ctx, err) {
 				ollamaErr = err
 				results = append(results, result{Config: c, Skipped: err})
 				continue
