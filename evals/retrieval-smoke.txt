@@ -1,0 +1,56 @@
+# Retrieval smoke set (issue #10): rules questions with the SRD chunks that
+# should come back. Format and command: see evals/README.md.
+#
+# number | group | query type | question | expected chunk ids (any one is a hit)
+
+# Group 1: named rules (20)
+
+# Spells
+1 | named | exact | What does Fireball do, and which saving throw does it use? | spells.fireball
+2 | named | exact | How many hit points does Cure Wounds restore? | spells.cure-wounds
+3 | named | exact | When can I cast Counterspell? | spells.counterspell
+4 | named | paraphrase | Which spell lets me vanish and reappear a short distance away in a space I can see? | spells.misty-step
+5 | named | exact | What Armor Class does Mage Armor give and how long does it last? | spells.mage-armor
+
+# Conditions
+6 | named | exact | What does the Grappled condition do? | rules-glossary.grappled
+7 | named | paraphrase | What happens to a creature that can't see? | rules-glossary.blinded
+8 | named | paraphrase | If I'm knocked to the ground, do attacks against me have Advantage? | rules-glossary.prone
+9 | named | exact | How do levels of Exhaustion work? | rules-glossary.exhaustion
+
+# Monsters
+10 | named | paraphrase | What does an Adult Red Dragon's breath attack do? | monsters-a-z.adult-red-dragon
+11 | named | paraphrase | What happens to a creature that touches a Mimic? | monsters-a-z.mimic
+12 | named | paraphrase | What stops a Troll from regenerating? | monsters-a-z.troll
+13 | named | exact | What is the Challenge Rating of an Owlbear? | monsters-a-z.owlbear
+
+# General rules
+14 | named | paraphrase | When can an enemy attack me as I move away from it? | rules-glossary.opportunity-attacks
+15 | named | paraphrase | What happens when I drop to 0 hit points? | playing-the-game.damage-and-healing.dropping-to-0-hit-points rules-glossary.death-saving-throw
+16 | named | paraphrase | How do I grab another creature to stop it from moving? | rules-glossary.grappling rules-glossary.unarmed-strike
+17 | named | paraphrase | How much does a low wall protect me from attacks? | playing-the-game.combat.cover rules-glossary.cover
+18 | named | exact | How long is a Short Rest and what can I do during it? | rules-glossary.short-rest
+19 | named | paraphrase | Can I take more than one reaction in a round? | rules-glossary.reaction playing-the-game.actions.reactions
+20 | named | paraphrase | Do I keep a spell going if I take damage? | rules-glossary.concentration
+
+# Group 2: described situations, no title words (19)
+
+21 | described | - | can I hit someone who walks away from me | rules-glossary.opportunity-attacks
+22 | described | - | what happens when I fall unconscious after taking too much damage | playing-the-game.damage-and-healing.dropping-to-0-hit-points rules-glossary.death-saving-throw
+23 | described | - | how far can I leap across a gap | rules-glossary.long-jump
+24 | described | - | can I wear two suits of protection at once | equipment.armor.one-at-a-time
+25 | described | - | what happens if I cannot breathe underwater | rules-glossary.suffocation-hazard
+26 | described | - | how much damage do I take when I drop off a cliff | rules-glossary.falling-hazard
+27 | described | - | what do I get back after sleeping overnight | rules-glossary.long-rest
+28 | described | - | can I keep two spells going that both need my focus | rules-glossary.concentration
+29 | described | - | what if I roll a natural 20 when swinging my sword | playing-the-game.damage-and-healing.critical-hits rules-glossary.critical-hit
+30 | described | - | can my wizard use magic while wearing plate | spells.casting-spells.casting-in-armor
+31 | described | - | how much weight can my character lift and haul | rules-glossary.carrying-capacity
+32 | described | - | what if I go too long without food | rules-glossary.malnutrition-hazard
+33 | described | - | does standing behind a low wall make me harder to hit | playing-the-game.combat.cover rules-glossary.cover
+34 | described | - | who goes first when a fight starts | rules-glossary.initiative playing-the-game.combat.the-order-of-combat
+35 | described | - | can I leave an enemy alive but senseless instead of killing them | rules-glossary.knocking-out-a-creature
+36 | described | - | how do I bond with a magic item so its powers work for me | rules-glossary.attunement equipment.magic-items.attunement
+37 | described | - | enemies ambush us and we did not notice them so what happens | rules-glossary.surprise
+38 | described | - | how can I spend my turn making myself harder to hit | rules-glossary.dodge-action
+39 | described | - | what penalties pile up when my character gets more and more tired | rules-glossary.exhaustion
