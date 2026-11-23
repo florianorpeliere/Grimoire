@@ -143,6 +143,16 @@ func TestCommittedSmokeSet(t *testing.T) {
 // scripts/srd-download.sh. It is skipped when the file is absent (it is
 // never committed); the runner checks the ids against the database anyway.
 func TestCommittedIDsInChunkerOutput(t *testing.T) {
+	if unknown := unknownIDs(readCommitted(t), chunkerIDs(t)); len(unknown) > 0 {
+		t.Errorf("expected ids not in the chunker output: %v", unknown)
+	}
+}
+
+// chunkerIDs returns the ids of the chunker output on the SRD Markdown
+// downloaded by scripts/srd-download.sh. It skips the test when the file is
+// absent (it is never committed).
+func chunkerIDs(t *testing.T) map[string]bool {
+	t.Helper()
 	f, err := os.Open(filepath.Join(repoRoot, srd.DefaultPath))
 	if errors.Is(err, os.ErrNotExist) {
 		t.Skipf("skipping: %s not found; run scripts/srd-download.sh to get the SRD Markdown", srd.DefaultPath)
@@ -159,7 +169,5 @@ func TestCommittedIDsInChunkerOutput(t *testing.T) {
 	for _, c := range chunks {
 		known[c.ID] = true
 	}
-	if unknown := unknownIDs(readCommitted(t), known); len(unknown) > 0 {
-		t.Errorf("expected ids not in the chunker output: %v", unknown)
-	}
+	return known
 }

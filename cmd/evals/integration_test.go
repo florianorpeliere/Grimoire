@@ -151,3 +151,92 @@ func TestRetrievalDatabase(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckDatabase runs the check subcommand against the test database, from
+// no schema to stored chunks. It never creates an embedder: check needs no
+// Ollama.
+func TestCheckDatabase(t *testing.T) {
+	conn := dbtest.Open(t)
+	dbtest.Reset(t, conn)
+	ctx := context.Background()
+	noEmbedder := func(func(string) string) (embed.Embedder, error) {
+		t.Error("the embedder was created, want none")
+		return nil, errors.New("no embedder")
+	}
+	valid := "1 | rules | What does Fireball do? | Fire damage. | spells.fireball\n" +
+		"2 | interaction | Fireball on a grappled foe? | Same save. | rules-glossary.grappled spells.fireball\n" +
+		"3 | refusal | Eldritch Knight? | The SRD does not say. | -\n"
+	check := func(t *testing.T, content string) (string, error) {
+		t.Helper()
+		var out bytes.Buffer
+		err := run(ctx, []string{"check", writeSmoke(t, content)}, testEnv, &out, noEmbedder)
+		return out.String(), err
+	}
+	fails := func(t *testing.T, content, wantMsg string) {
+		t.Helper()
+		out, err := check(t, content)
+		if err == nil || !strings.Contains(err.Error(), wantMsg) {
+			t.Fatalf("err = %v, want it to contain %q", err, wantMsg)
+		}
+		if out != "" {
+			t.Fatalf("printed %q, want nothing", out)
+		}
+	}
+
+	fails(t, valid, "no srd_chunks table")
+	if _, err := db.Migrate(ctx, conn); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	fails(t, valid, "no SRD chunk in the database")
+	chunks := append([]srd.Chunk(nil), fixtures...)
+	for i := range chunks {
+		chunks[i].Hash = "hash " + chunks[i].ID
+	}
+	if _, err := srd.Store(ctx, conn, srd.Version, chunks, srd.StoreOptions{}); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		content string
+		wantErr string   // empty for a valid file
+		want    []string // output, spaces collapsed
+	}{
+		{
+			name:    "valid, counts below plan",
+			content: valid,
+			want: []string{"3 question(s), every record well formed, every expected chunk id stored.",
+				"rules 1 80 79 below plan", "interaction 1 40 39 below plan", "refusal 1 15 14 below plan",
+				"campaign 0 15 15 below plan", "total 3 150 147 below plan"},
+		},
+		{
+			name:    "no question yet",
+			content: "# nothing yet\n",
+			want:    []string{"0 question(s)", "total 0 150 150 below plan"},
+		},
+		{
+			name: "unknown ids, all listed once",
+			content: "1 | rules | Fireball? | Fire. | spells.fireball spells.nope\n" +
+				"2 | interaction | Mage Armor and grappled? | No. | spells.mage-armor spells.nope\n",
+			wantErr: "2 expected chunk id(s) are not stored chunks (check them against ingest srd -dry-run): spells.mage-armor, spells.nope",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.wantErr != "" {
+				fails(t, tt.content, tt.wantErr)
+				return
+			}
+			out, err := check(t, tt.content)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			got := strings.Join(strings.Fields(out), " ")
+			for _, w := range tt.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("output has no %q:\n%s", w, out)
+				}
+			}
+		})
+	}
+}

@@ -1,0 +1,17 @@
+# Eval set (step 2, issue #28): hand-written questions with the expected answer
+# and the SRD chunks an answer should cite. Format and command: see
+# evals/README.md. Check the file with: make eval-check
+#
+# number | category | question | expected answer | expected chunk ids
+#
+# category: rules (80 planned), interaction (40), refusal (15), campaign (15,
+# reserved until step 4). Expected chunk ids: one or more, citing any one of
+# them counts; "-" for a refusal question.
+#
+# Format examples, commented out so the command ignores them; they are not part
+# of the eval set. The test TestEvalSetExamples parses the lines that start with
+# "# example: " and checks their ids against the chunker output.
+#
+# example: 1 | rules | What saving throw does Fireball call for, and how much damage does it deal? | A Dexterity saving throw; 8d6 Fire damage on a failed save, half as much on a success. | spells.fireball
+# example: 2 | interaction | Does casting Misty Step to get away from an adjacent enemy provoke an Opportunity Attack? | No: Misty Step teleports you, and teleporting does not provoke an Opportunity Attack. | playing-the-game.combat.melee-attacks spells.misty-step
+# example: 3 | refusal | How does the Eldritch Knight fighter subclass work? | The SRD does not say: the Eldritch Knight subclass is not in the SRD. | -
