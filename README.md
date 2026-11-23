@@ -174,6 +174,14 @@ go run ./cmd/ask -h      # all flags, and the JSON fields
   has an embedding from the configured model; 2 for a usage error (such as an empty question).
   Errors go to stderr as plain text, also with `-json`: check the exit status.
 
+## Retrieval smoke set
+
+`make eval-retrieval` runs the 39 questions of `evals/retrieval-smoke.txt` through the hybrid,
+keyword-only and vector-only searches (and hybrid with the prefix off), with `DATABASE_URL` and
+`OLLAMA_HOST` set, and prints first-result and recall@8 per group, the rank of each expected
+chunk and the misses. It measures only: a low score never fails it. See
+[evals/README.md](evals/README.md) for the file format and the report.
+
 ## Build and test
 
 ```sh
@@ -212,9 +220,11 @@ Use `go test -v ./...` to see which tests were skipped and why.
 ```
 cmd/ingest/        database migrations, SRD chunking dry run, storage and embedding
 cmd/ask/           ask a rules question, print the SRD passages found (no answer generation)
+cmd/evals/         eval runner: retrieval smoke set (see evals/README.md)
 internal/db/       connection and embedded migrations
 internal/srd/      SRD Markdown split into chunks (see docs/srd-chunking.md), their storage and embeddings
 internal/embed/    embedding provider interface; ollama/ is the Ollama provider, embedtest/ a fake
 internal/search/   hybrid search over the SRD chunks: keyword (full-text), vector, and their fusion
 internal/dbtest/   helpers for integration tests
+evals/             eval questions: retrieval-smoke.txt
 ```
