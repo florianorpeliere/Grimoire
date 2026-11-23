@@ -99,3 +99,53 @@ func TestFake(t *testing.T) {
 		})
 	}
 }
+
+func TestFakeCanceled(t *testing.T) {
+	tests := []struct {
+		name   string
+		deltas []string
+	}{
+		{name: "with deltas", deltas: []string{"a", "b"}},
+		{name: "without deltas", deltas: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			f := &llmtest.Fake{Deltas: tt.deltas}
+			var got []string
+			_, err := f.Generate(ctx, llm.Request{Model: "m"}, func(d string) error { got = append(got, d); return nil })
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("err = %v, want context.Canceled", err)
+			}
+			if len(got) != 0 {
+				t.Errorf("deltas %q sent after cancel", got)
+			}
+		})
+	}
+}
+
+func TestFakeResultIsACopy(t *testing.T) {
+	out, cost := int64(7), 0.5
+	f := &llmtest.Fake{Result: llm.Result{Usage: &llm.Usage{InputTokens: 3, OutputTokens: &out}, CostUSD: &cost}}
+	tests := []struct {
+		name   string
+		mutate func(*llm.Result)
+	}{
+		{name: "input tokens", mutate: func(r *llm.Result) { r.Usage.InputTokens = 99 }},
+		{name: "output tokens", mutate: func(r *llm.Result) { *r.Usage.OutputTokens = 99 }},
+		{name: "cost", mutate: func(r *llm.Result) { *r.CostUSD = 99 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := f.Generate(context.Background(), llm.Request{Model: "m"}, func(string) error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.mutate(&res)
+			if f.Result.Usage.InputTokens != 3 || out != 7 || cost != 0.5 {
+				t.Errorf("changing the result changed the script: %+v, output %d, cost %v", *f.Result.Usage, out, cost)
+			}
+		})
+	}
+}

@@ -10,12 +10,23 @@
 // ones from message_start. The output count is known only once message_stop
 // has arrived after a message_delta; a stream cut earlier reports it as
 // unknown, and so its cost.
+//
+// The cost is reported as unknown (nil), never guessed, when:
+//   - the model has no price in the table, or a count is unknown;
+//   - the usage reports a service tier, speed or inference geography other
+//     than the standard one, which the table does not price;
+//   - an earlier attempt of the same call reached message_start and was then
+//     retried: that attempt may have been billed, and the docs do not say.
+//     Usage then describes the last attempt only.
 package claude
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"strings"
 	"time"
 
@@ -33,14 +44,16 @@ const (
 	Backend = "claude-api"
 	// DefaultMaxTokens caps the output when the request does not.
 	DefaultMaxTokens = 4096
-	// Retries is how many times a call is retried after a transient error,
-	// so a call is tried at most Retries+1 times. Before the response starts,
-	// the SDK retries network errors, HTTP 408, 409, 429 and 5xx (529
-	// overloaded included) with exponential backoff, honouring retry-after.
-	// Once the response has started, Generate retries an error event
-	// (overloaded_error, api_error, rate_limit_error, timeout_error) or a cut
-	// connection, but only while no text has been passed to the caller, so
-	// that no text is ever sent twice. Other errors are returned at once.
+	// Retries bounds the retries of one Generate call: it sends at most
+	// Retries+1 HTTP requests in total, whatever the mix of errors.
+	//
+	// Before the response starts, the SDK retries network errors, HTTP 408,
+	// 409, 429 and 5xx (529 overloaded included) with exponential backoff,
+	// honouring retry-after. Once the response has started (HTTP 200),
+	// Generate retries an error event (overloaded_error, api_error,
+	// rate_limit_error, timeout_error) or a cut connection, but only while no
+	// text has been passed to the caller, so that no text is ever sent twice.
+	// Other errors are returned at once.
 	Retries = 2
 )
 
@@ -80,7 +93,6 @@ func newClient(key string, opts ...option.RequestOption) *Client {
 		// comes from ANTHROPIC_API_KEY only.
 		option.WithoutEnvironmentDefaults(),
 		option.WithAPIKey(key),
-		option.WithMaxRetries(Retries),
 	}
 	return &Client{
 		api:     anthropic.NewClient(append(base, opts...)...),
@@ -97,7 +109,8 @@ func backoff(n int) time.Duration {
 // Name returns Backend.
 func (c *Client) Name() string { return Backend }
 
-// Generate streams the answer to req. See llm.Generator.
+// Generate streams the answer to req. See llm.Generator and the package
+// documentation for retries and for when the cost is unknown.
 func (c *Client) Generate(ctx context.Context, req llm.Request, onText func(string) error) (llm.Result, error) {
 	res := llm.Result{Backend: Backend, Model: strings.TrimSpace(req.Model)}
 	params, err := buildParams(req)
@@ -105,12 +118,19 @@ func (c *Client) Generate(ctx context.Context, req llm.Request, onText func(stri
 		return res, err
 	}
 	start := time.Now()
+	budget := c.retries + 1 // HTTP requests left for this call
+	discarded := false      // an earlier attempt reached message_start
 	for attempt := 0; ; attempt++ {
 		var a attemptState
-		res, a, err = c.stream(ctx, start, params, onText)
-		if err == nil || a.emitted || !a.started || attempt >= c.retries || !transient(ctx, err) {
+		res, a, err = c.stream(ctx, start, params, onText, budget-1)
+		budget -= a.requests
+		if discarded {
+			res.CostUSD = nil
+		}
+		if err == nil || a.emitted || !a.started || budget <= 0 || !transient(ctx, err) {
 			return res, err
 		}
+		discarded = discarded || a.metered
 		select {
 		case <-ctx.Done():
 			return res, ctx.Err()
@@ -119,10 +139,13 @@ func (c *Client) Generate(ctx context.Context, req llm.Request, onText func(stri
 	}
 }
 
-// attemptState tells Generate whether an attempt can be retried.
+// attemptState tells Generate what one attempt used and whether it can be
+// retried.
 type attemptState struct {
-	started bool // at least one event arrived: the SDK's retries are over
-	emitted bool // text was passed to the caller
+	requests int  // HTTP requests sent, the SDK's retries included
+	started  bool // the response started (HTTP 200): the SDK's retries are over
+	metered  bool // message_start reported usage: the attempt may be billed
+	emitted  bool // text was passed to the caller
 }
 
 // errCallback marks an error returned by the caller's onText.
@@ -131,19 +154,24 @@ type errCallback struct{ err error }
 func (e errCallback) Error() string { return "text callback: " + e.err.Error() }
 func (e errCallback) Unwrap() error { return e.err }
 
-// stream makes one streamed call.
-func (c *Client) stream(ctx context.Context, start time.Time, params anthropic.MessageNewParams, onText func(string) error) (llm.Result, attemptState, error) {
+// stream makes one streamed call, letting the SDK retry at most maxRetries
+// times before the response starts.
+func (c *Client) stream(ctx context.Context, start time.Time, params anthropic.MessageNewParams, onText func(string) error, maxRetries int) (llm.Result, attemptState, error) {
 	res := llm.Result{Backend: Backend, Model: string(params.Model)}
 	var (
 		st       attemptState
 		u        llm.Usage
-		hasUsage bool  // message_start reported usage
 		output   int64 // last cumulative output count
 		hasDelta bool  // a message_delta reported an output count
 		stopped  bool  // message_stop arrived
+		unpriced bool  // the usage reports a billing modifier the table lacks
 		err      error
 	)
-	s := c.api.Messages.NewStreaming(ctx, params)
+	count := func(r *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+		st.requests++
+		return next(r)
+	}
+	s := c.api.Messages.NewStreaming(ctx, params, option.WithMaxRetries(maxRetries), option.WithMiddleware(count))
 	defer s.Close()
 	for err == nil && s.Next() {
 		st.started = true
@@ -153,13 +181,14 @@ func (c *Client) stream(ctx context.Context, start time.Time, params anthropic.M
 				res.Model = string(ev.Message.Model)
 			}
 			mu := ev.Message.Usage
-			hasUsage = mu.JSON.InputTokens.Valid()
+			st.metered = mu.JSON.InputTokens.Valid()
 			u.InputTokens = mu.InputTokens
 			u.CacheCreationInputTokens = mu.CacheCreationInputTokens
 			u.CacheCreation5mInputTokens = mu.CacheCreation.Ephemeral5mInputTokens
 			u.CacheCreation1hInputTokens = mu.CacheCreation.Ephemeral1hInputTokens
 			u.CacheReadInputTokens = mu.CacheReadInputTokens
 			// mu.OutputTokens is a placeholder: the count comes in message_delta.
+			unpriced = !standardPricing(mu)
 		case anthropic.ContentBlockDeltaEvent:
 			td, ok := ev.Delta.AsAny().(anthropic.TextDelta)
 			if !ok || td.Text == "" {
@@ -195,20 +224,43 @@ func (c *Client) stream(ctx context.Context, start time.Time, params anthropic.M
 	}
 	if err == nil {
 		err = s.Err()
+		// An error event that comes first, before any decoded event, still
+		// arrives after HTTP 200: the SDK builds it with the response status.
+		var apiErr *anthropic.Error
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusOK {
+			st.started = true
+		}
 	}
 	if err == nil && !stopped {
 		err = ErrIncompleteStream
 	}
-	if hasUsage {
+	if st.metered {
 		if stopped && hasDelta {
 			u.OutputTokens = &output
 		}
 		res.Usage = &u
-		if usd, ok := Cost(res.Model, u); ok {
+		if usd, ok := Cost(res.Model, u); ok && !unpriced {
 			res.CostUSD = &usd
 		}
 	}
 	return res, st, err
+}
+
+// standardPricing reports whether the usage was billed at the standard
+// first-party prices of the table: standard service tier and speed, global
+// inference geography (https://platform.claude.com/docs/en/about-claude/pricing).
+// A field the response leaves out counts as standard.
+func standardPricing(u anthropic.Usage) bool {
+	if u.JSON.ServiceTier.Valid() && u.ServiceTier != anthropic.UsageServiceTierStandard {
+		return false
+	}
+	if u.JSON.Speed.Valid() && u.Speed != anthropic.UsageSpeedStandard {
+		return false
+	}
+	if u.JSON.InferenceGeo.Valid() && u.InferenceGeo != "" && u.InferenceGeo != "global" {
+		return false
+	}
+	return true
 }
 
 // transient reports whether an error that happened after the response
@@ -229,8 +281,10 @@ func transient(ctx context.Context, err error) bool {
 		}
 		return false
 	}
-	// A cut connection or a network error while reading the stream.
-	return true
+	// A cut connection or a network error while reading the stream. Other
+	// errors, such as an event that cannot be decoded, would fail again.
+	var netErr net.Error
+	return errors.Is(err, ErrIncompleteStream) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &netErr)
 }
 
 // buildParams turns req into Messages API parameters.

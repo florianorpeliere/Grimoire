@@ -86,8 +86,9 @@ type Result struct {
 	// Usage is nil when the backend cannot report token usage.
 	Usage *Usage
 	// CostUSD is nil when the cost is unknown: the backend does not report
-	// usage, the model has no known price, or a count is unknown. It is
-	// never a placeholder zero.
+	// usage, the model has no known price, a count is unknown, or the call
+	// cannot be fully accounted for (for example a retried attempt that may
+	// have been billed). It is never a placeholder zero.
 	CostUSD *float64
 }
 

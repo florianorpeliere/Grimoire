@@ -24,10 +24,12 @@ type modelPrice struct {
 // models.
 //
 // Source: https://platform.claude.com/docs/en/about-claude/pricing, section
-// "Model pricing" and "Long context pricing", read on 2026-11-23. Update it by
-// PR when the page changes. Not covered, because this client never uses them:
-// the Batch API discount, fast mode, US-only inference (inference_geo, 1.1x),
-// and server tools billed per use. A model missing here gets an unknown cost.
+// "Model pricing" and "Long context pricing", read on 2026-11-23 and every
+// row re-checked against the page the same day. Update it by PR when the page
+// changes. Not covered, because this client never uses them: the Batch API
+// discount, fast mode, US-only inference (inference_geo, 1.1x), and server
+// tools billed per use; a response reporting one of them gets an unknown cost
+// (see standardPricing). A model missing here gets an unknown cost.
 var prices = map[string]modelPrice{
 	"claude-fable-5-2":  {base: Price{Input: 8, CacheWrite5m: 10, CacheWrite1h: 16, CacheRead: 0.20, Output: 40}},
 	"claude-opus-5-5":   {base: Price{Input: 4, CacheWrite5m: 5, CacheWrite1h: 8, CacheRead: 0.20, Output: 20}},

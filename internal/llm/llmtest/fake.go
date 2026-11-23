@@ -40,13 +40,15 @@ func (f *Fake) Name() string {
 }
 
 // Generate records req and plays the script. Like a real backend, it fails
-// with llm.ErrNoModel, before sending anything, when req.Model is blank.
-func (f *Fake) Generate(_ context.Context, req llm.Request, onText func(string) error) (llm.Result, error) {
+// with llm.ErrNoModel, before sending anything, when req.Model is blank, and
+// stops with ctx's error once ctx is done. The returned Result is a copy:
+// changing its Usage or CostUSD does not change the script.
+func (f *Fake) Generate(ctx context.Context, req llm.Request, onText func(string) error) (llm.Result, error) {
 	f.mu.Lock()
 	f.requests = append(f.requests, req)
 	f.mu.Unlock()
 
-	res := f.Result
+	res := copyResult(f.Result)
 	res.Backend = f.Name()
 	if strings.TrimSpace(req.Model) == "" {
 		return llm.Result{Backend: res.Backend}, llm.ErrNoModel
@@ -55,11 +57,34 @@ func (f *Fake) Generate(_ context.Context, req llm.Request, onText func(string) 
 		res.Model = req.Model
 	}
 	for _, d := range f.Deltas {
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
 		if err := onText(d); err != nil {
 			return res, fmt.Errorf("text callback: %w", err)
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return res, err
+	}
 	return res, f.Err
+}
+
+// copyResult copies r and the values its pointers point to.
+func copyResult(r llm.Result) llm.Result {
+	if r.Usage != nil {
+		u := *r.Usage
+		if u.OutputTokens != nil {
+			n := *u.OutputTokens
+			u.OutputTokens = &n
+		}
+		r.Usage = &u
+	}
+	if r.CostUSD != nil {
+		c := *r.CostUSD
+		r.CostUSD = &c
+	}
+	return r
 }
 
 // Requests returns the requests Generate received, in call order.
