@@ -11,8 +11,9 @@ import (
 	"github.com/florianorpeliere/grimoire/internal/evalset"
 )
 
-// examplePrefix marks the commented-out format examples of the eval set.
-const examplePrefix = "# example: "
+// examplePrefix marks the commented-out format examples of the eval set; one
+// space after it is part of the prefix.
+const examplePrefix = "#>"
 
 // readEvalSet parses the committed eval set.
 func readEvalSet(t *testing.T) []evalset.Question {
@@ -37,7 +38,7 @@ func readExamples(t *testing.T) []evalset.Question {
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		if s, ok := strings.CutPrefix(sc.Text(), examplePrefix); ok {
-			lines = append(lines, s)
+			lines = append(lines, strings.TrimPrefix(s, " "))
 		}
 	}
 	if err := sc.Err(); err != nil {

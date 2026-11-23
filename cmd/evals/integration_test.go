@@ -163,9 +163,9 @@ func TestCheckDatabase(t *testing.T) {
 		t.Error("the embedder was created, want none")
 		return nil, errors.New("no embedder")
 	}
-	valid := "1 | rules | What does Fireball do? | Fire damage. | spells.fireball\n" +
-		"2 | interaction | Fireball on a grappled foe? | Same save. | rules-glossary.grappled spells.fireball\n" +
-		"3 | refusal | Eldritch Knight? | The SRD does not say. | -\n"
+	valid := "1 rules\nQ: What does Fireball do?\nA: Fire damage.\ncite: spells.fireball\n\n" +
+		"2 interaction\nQ: Fireball on a grappled foe?\nA: Same save.\ncite: rules-glossary.grappled\ncite: spells.fireball\n\n" +
+		"3 refusal\nQ: Eldritch Knight?\nA: The SRD does not say.\ncite: -\n"
 	check := func(t *testing.T, content string) (string, error) {
 		t.Helper()
 		var out bytes.Buffer
@@ -216,8 +216,8 @@ func TestCheckDatabase(t *testing.T) {
 		},
 		{
 			name: "unknown ids, all listed once",
-			content: "1 | rules | Fireball? | Fire. | spells.fireball spells.nope\n" +
-				"2 | interaction | Mage Armor and grappled? | No. | spells.mage-armor spells.nope\n",
+			content: "1 rules\nQ: Fireball?\nA: Fire.\ncite: spells.fireball spells.nope\n\n" +
+				"2 interaction\nQ: Mage Armor and grappled?\nA: No.\ncite: spells.mage-armor\ncite: rules-glossary.grappled\n  spells.nope\n",
 			wantErr: "2 expected chunk id(s) are not stored chunks (check them against ingest srd -dry-run): spells.mage-armor, spells.nope",
 		},
 	}

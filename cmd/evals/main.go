@@ -42,8 +42,9 @@ var usage = fmt.Sprintf(`usage: evals retrieval [file]
 
 retrieval: runs every question of the retrieval smoke set (default
 %[1]s; format in evals/README.md) through the SRD search in
-the database at DATABASE_URL, and prints, per configuration and group, first-result and recall@%[2]d, the rank
-of each expected chunk id, and the misses. Configurations:
+the database at DATABASE_URL, and prints, per configuration and group,
+first-result and recall@%[2]d, the rank of each expected chunk id, and the
+misses. Configurations:
   hybrid             hybrid search with the ask command's defaults
   keyword            keyword search only (needs no Ollama)
   vector             vector search only, prefix as the ask command's default

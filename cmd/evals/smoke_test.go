@@ -49,6 +49,8 @@ func TestParseSmoke(t *testing.T) {
 		{name: "question too long", in: "1 | named | exact | " + strings.Repeat("a", search.MaxQueryBytes+1) + " | x.y\n",
 			wantErr: []string{"longer than 1000 bytes"}},
 		{name: "no expected id", in: "1 | named | exact | q |  \n", wantErr: []string{"no expected chunk id"}},
+		{name: "a line too long names its line", in: "1 | named | exact | q | x.y\n# " + strings.Repeat("a", 70_000) + "\n",
+			wantErr: []string{"line 2: bufio.Scanner: token too long"}},
 		{name: "id listed twice", in: "1 | named | exact | q | x.y x.y\n", wantErr: []string{`"x.y" listed twice`}},
 		{
 			name:    "every bad line is reported",

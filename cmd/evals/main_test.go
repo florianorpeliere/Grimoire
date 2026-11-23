@@ -60,7 +60,7 @@ func TestRunFailsBeforeConnecting(t *testing.T) {
 	bad := filepath.Join(dir, "bad.txt")
 	good := filepath.Join(dir, "good.txt")
 	badSet := filepath.Join(dir, "bad-set.txt")
-	if err := os.WriteFile(badSet, []byte("1 | rules | q | a | x.y\n2 | trivia | q2 | a | x.y\n"), 0o600); err != nil {
+	if err := os.WriteFile(badSet, []byte("1 rules\nQ: q\nA: a\ncite: x.y\n\n2 trivia\nQ: q2\nA: a\ncite: x.y\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(bad, []byte("1 | named | exact | q\n"), 0o600); err != nil {
@@ -84,7 +84,7 @@ func TestRunFailsBeforeConnecting(t *testing.T) {
 		{name: "malformed file", args: []string{"retrieval", bad}, wantMsg: "line 1: want 5 fields"},
 		{name: "DATABASE_URL unset", args: []string{"retrieval", good}, wantErr: db.ErrNoURL},
 		{name: "check, missing file", args: []string{"check", filepath.Join(dir, "none.txt")}, wantErr: os.ErrNotExist},
-		{name: "check, malformed record", args: []string{"check", badSet}, wantMsg: `line 2: category "trivia"`},
+		{name: "check, malformed record", args: []string{"check", badSet}, wantMsg: `line 6: category "trivia"`},
 		{name: "check, DATABASE_URL unset", args: []string{"check", filepath.Join(repoRoot, evalset.DefaultFile)}, wantErr: db.ErrNoURL},
 	}
 	for _, tt := range tests {

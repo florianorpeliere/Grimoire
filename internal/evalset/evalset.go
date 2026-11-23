@@ -5,7 +5,7 @@
 package evalset
 
 import (
-	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -38,20 +38,62 @@ var Categories = []Category{Rules, Interaction, Refusal, Campaign}
 // count below plan is not an error: questions are added in batches.
 var Planned = map[Category]int{Rules: 80, Interaction: 40, Refusal: 15, Campaign: 15}
 
-// None is written in the ids field of a question that cites no chunk.
+// None is the only value of the cite line of a refusal question.
 const None = "-"
+
+// Keys of the lines of a record.
+const (
+	keyQuestion = "Q:"
+	keyAnswer   = "A:"
+	keyCite     = "cite:"
+)
 
 // Question is one record of the eval set.
 type Question struct {
 	Num      int
+	Line     int // line of the record's header in the file
 	Category Category
-	Text     string   // the question, as asked
-	Answer   string   // the expected answer, short, in our own words
-	Expected []string // SRD chunk ids; citing any one of them counts. Empty for Refusal.
+	Text     string // the question, as asked
+	Answer   string // the expected answer, short, in our own words
+	// Expected holds the citation groups: one per cite line, each listing
+	// alternative SRD chunk ids. A correct citation has at least one id of
+	// every group. Empty for Refusal.
+	Expected [][]string
 }
 
-// fields is the number of "|"-separated fields of a record.
-const fields = 5
+// IDs returns every expected chunk id, all groups together, in file order.
+func (q Question) IDs() []string {
+	var ids []string
+	for _, g := range q.Expected {
+		ids = append(ids, g...)
+	}
+	return ids
+}
+
+// GroupsCovered returns how many citation groups have at least one of their
+// ids in ids.
+func (q Question) GroupsCovered(ids []string) int {
+	n := 0
+	for _, g := range q.Expected {
+		if slices.ContainsFunc(g, func(id string) bool { return slices.Contains(ids, id) }) {
+			n++
+		}
+	}
+	return n
+}
+
+// Covered reports whether ids hold at least one id of every citation group:
+// a correct citation. It is false for a question with no group (Refusal),
+// which has nothing to cite.
+func (q Question) Covered(ids []string) bool {
+	return len(q.Expected) > 0 && q.GroupsCovered(ids) == len(q.Expected)
+}
+
+// AnyExpected reports whether ids hold at least one expected id, of any
+// group.
+func (q Question) AnyExpected(ids []string) bool {
+	return q.GroupsCovered(ids) > 0
+}
 
 // Read parses the eval set file. An error names the file.
 func Read(file string) ([]Question, error) {
@@ -67,97 +109,206 @@ func Read(file string) ([]Question, error) {
 	return qs, nil
 }
 
+// line is a non-comment line of the file, with its number.
+type line struct {
+	num  int
+	text string // without the line ending and trailing spaces
+}
+
 // Parse reads an eval set (format in evals/README.md). It reports every
-// malformed record with its line number, not only the first. A file with no
-// record is valid and returns no question.
+// malformed record with the line number of the problem, not only the first
+// record. A file with no record is valid and returns no question.
 func Parse(r io.Reader) ([]Question, error) {
+	// The whole file is read at once, so that no line is too long to be
+	// reported with its number.
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	data = bytes.TrimPrefix(data, []byte("\uFEFF"))
 	var (
-		qs    []Question
-		errs  []error
-		nums  = map[int]int{}    // question number -> line
-		texts = map[string]int{} // normalized question -> line
+		qs     []Question
+		errs   []error
+		nums   = map[int]int{}    // question number -> line
+		texts  = map[string]int{} // normalized question -> line
+		record []line
 	)
-	sc := bufio.NewScanner(r)
-	for line := 1; sc.Scan(); line++ {
-		s := strings.TrimSpace(sc.Text())
-		if s == "" || strings.HasPrefix(s, "#") {
-			continue
+	flush := func() {
+		if len(record) == 0 {
+			return
 		}
-		q, err := parseRecord(s)
+		q, err := parseRecord(record)
+		record = nil
 		if err == nil {
 			key := strings.ToLower(strings.Join(strings.Fields(q.Text), " "))
 			if prev, dup := nums[q.Num]; dup {
-				err = fmt.Errorf("question number %d already used on line %d", q.Num, prev)
+				err = lineError(q.Line, fmt.Errorf("question number %d already used on line %d", q.Num, prev))
 			} else if prev, dup := texts[key]; dup {
-				err = fmt.Errorf("same question as on line %d", prev)
+				err = lineError(q.Line, fmt.Errorf("same question as on line %d", prev))
 			} else {
-				nums[q.Num], texts[key] = line, line
+				nums[q.Num], texts[key] = q.Line, q.Line
 			}
 		}
 		if err != nil {
-			errs = append(errs, fmt.Errorf("line %d: %w", line, err))
-			continue
+			errs = append(errs, err)
+			return
 		}
 		qs = append(qs, q)
 	}
-	if err := sc.Err(); err != nil {
-		return nil, err
+	for i, s := range strings.Split(string(data), "\n") {
+		s = strings.TrimRight(s, " \t\r")
+		switch t := strings.TrimSpace(s); {
+		case t == "":
+			flush()
+		case strings.HasPrefix(t, "#"):
+			// A comment line is ignored and does not end the record.
+		default:
+			record = append(record, line{num: i + 1, text: s})
+		}
 	}
+	flush()
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
 	return qs, nil
 }
 
-func parseRecord(s string) (Question, error) {
-	parts := strings.Split(s, "|")
-	if len(parts) != fields {
-		return Question{}, fmt.Errorf("want %d fields separated by |, got %d", fields, len(parts))
+func lineError(n int, err error) error {
+	return fmt.Errorf("line %d: %w", n, err)
+}
+
+func indented(s string) bool {
+	return s != "" && (s[0] == ' ' || s[0] == '\t')
+}
+
+// parseRecord parses the lines of one record, blank lines and comments
+// removed. The error gives the line of the first problem found.
+func parseRecord(lines []line) (Question, error) {
+	head := lines[0]
+	if indented(head.text) {
+		return Question{}, lineError(head.num, errors.New("a record starts with an unindented header: <number> <category>"))
 	}
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
+	q, err := parseHeader(head.text)
+	if err != nil {
+		return Question{}, lineError(head.num, err)
 	}
-	n, err := strconv.Atoi(parts[0])
+	q.Line = head.num
+
+	var (
+		key              string // key of the line being continued
+		text, answer     []string
+		textAt, answerAt int // lines of the Q: and A: lines
+		cites            [][]string
+		citeAt           []int // line of each cite line
+	)
+	for _, l := range lines[1:] {
+		if indented(l.text) {
+			v := strings.TrimSpace(l.text)
+			switch key {
+			case keyQuestion:
+				text = append(text, v)
+			case keyAnswer:
+				answer = append(answer, v)
+			case keyCite:
+				cites[len(cites)-1] = append(cites[len(cites)-1], strings.Fields(v)...)
+			default:
+				return Question{}, lineError(l.num, errors.New("an indented line continues a Q:, A: or cite: line, and there is none above it"))
+			}
+			continue
+		}
+		k, v, ok := splitKey(l.text)
+		switch {
+		case !ok:
+			return Question{}, lineError(l.num, fmt.Errorf("want a line starting with %s, %s or %s (records are separated by a blank line)", keyQuestion, keyAnswer, keyCite))
+		case k == keyQuestion && textAt > 0:
+			return Question{}, lineError(l.num, fmt.Errorf("second %s line, the first is on line %d", keyQuestion, textAt))
+		case k == keyAnswer && answerAt > 0:
+			return Question{}, lineError(l.num, fmt.Errorf("second %s line, the first is on line %d", keyAnswer, answerAt))
+		}
+		key = k
+		switch k {
+		case keyQuestion:
+			textAt, text = l.num, []string{v}
+		case keyAnswer:
+			answerAt, answer = l.num, []string{v}
+		case keyCite:
+			cites, citeAt = append(cites, strings.Fields(v)), append(citeAt, l.num)
+		}
+	}
+
+	q.Text = strings.TrimSpace(strings.Join(text, " "))
+	q.Answer = strings.TrimSpace(strings.Join(answer, " "))
+	switch {
+	case textAt == 0:
+		return Question{}, lineError(head.num, fmt.Errorf("no %s line", keyQuestion))
+	case q.Text == "":
+		return Question{}, lineError(textAt, errors.New("the question is empty"))
+	case len(q.Text) > search.MaxQueryBytes:
+		return Question{}, lineError(textAt, fmt.Errorf("the question is longer than %d bytes", search.MaxQueryBytes))
+	case answerAt == 0:
+		return Question{}, lineError(head.num, fmt.Errorf("no %s line", keyAnswer))
+	case q.Answer == "":
+		return Question{}, lineError(answerAt, errors.New("the expected answer is empty"))
+	case len(cites) == 0:
+		return Question{}, lineError(head.num, fmt.Errorf("no %s line: list the chunk ids, or write %s %s for a refusal question", keyCite, keyCite, None))
+	}
+	if q.Category == Refusal {
+		if len(cites) != 1 || !slices.Equal(cites[0], []string{None}) {
+			return Question{}, lineError(citeAt[0], fmt.Errorf("a refusal question cites no chunk: write one line %s %s", keyCite, None))
+		}
+		return q, nil
+	}
+	var seen []string
+	for i, g := range cites {
+		if len(g) == 0 {
+			return Question{}, lineError(citeAt[i], fmt.Errorf("the %s line lists no chunk id", keyCite))
+		}
+		for _, id := range g {
+			switch {
+			case id == None:
+				return Question{}, lineError(citeAt[i], fmt.Errorf("%s is only for refusal questions; category %s cites at least one chunk id", None, q.Category))
+			case strings.HasPrefix(id, "#"):
+				return Question{}, lineError(citeAt[i], errors.New("no comment on a cite line: a comment is a whole line starting with #"))
+			case slices.Contains(seen, id):
+				return Question{}, lineError(citeAt[i], fmt.Errorf("chunk id %q listed twice in the record", id))
+			}
+			seen = append(seen, id)
+		}
+	}
+	q.Expected = cites
+	return q, nil
+}
+
+// parseHeader parses "<number> <category>".
+func parseHeader(s string) (Question, error) {
+	f := strings.Fields(s)
+	if len(f) != 2 {
+		return Question{}, fmt.Errorf("header %q: want <number> <category>", s)
+	}
+	n, err := strconv.Atoi(f[0])
 	if err != nil || n < 1 {
-		return Question{}, fmt.Errorf("question number %q is not a positive integer", parts[0])
+		return Question{}, fmt.Errorf("question number %q is not a positive integer", f[0])
 	}
-	q := Question{Num: n, Category: Category(parts[1]), Text: parts[2], Answer: parts[3]}
+	q := Question{Num: n, Category: Category(f[1])}
 	if !slices.Contains(Categories, q.Category) {
 		return Question{}, fmt.Errorf("category %q: want one of %s", q.Category, categoryList())
 	}
 	if q.Category == Campaign {
 		// Notes ingestion is step 4: note chunk ids, and so the citation of a
-		// session, are not defined yet (open question on issue #28).
+		// session, are not defined yet (decided on issue #28).
 		return Question{}, errors.New("category campaign is reserved: campaign questions are written in step 4, once notes have chunk ids")
 	}
-	if q.Text == "" {
-		return Question{}, errors.New("the question is empty")
-	}
-	if len(q.Text) > search.MaxQueryBytes {
-		return Question{}, fmt.Errorf("the question is longer than %d bytes", search.MaxQueryBytes)
-	}
-	if q.Answer == "" {
-		return Question{}, errors.New("the expected answer is empty")
-	}
-	ids := strings.Fields(parts[4])
-	switch {
-	case len(ids) == 0:
-		return Question{}, fmt.Errorf("the expected chunk ids are empty: list them, or write %s for a refusal question", None)
-	case q.Category == Refusal:
-		if len(ids) != 1 || ids[0] != None {
-			return Question{}, fmt.Errorf("a refusal question lists no chunk id: write %s", None)
-		}
-		return q, nil
-	case slices.Contains(ids, None):
-		return Question{}, fmt.Errorf("category %s needs at least one expected chunk id; %s is only for refusal questions", q.Category, None)
-	}
-	for i, id := range ids {
-		if slices.Contains(ids[:i], id) {
-			return Question{}, fmt.Errorf("expected chunk id %q listed twice", id)
-		}
-	}
-	q.Expected = ids
 	return q, nil
+}
+
+// splitKey splits a "Q: text" line into its key and value.
+func splitKey(s string) (key, value string, ok bool) {
+	for _, k := range []string{keyQuestion, keyAnswer, keyCite} {
+		if v, found := strings.CutPrefix(s, k); found {
+			return k, strings.TrimSpace(v), true
+		}
+	}
+	return "", "", false
 }
 
 func categoryList() string {
@@ -173,7 +324,7 @@ func categoryList() string {
 func UnknownIDs(qs []Question, known map[string]bool) []string {
 	var out []string
 	for _, q := range qs {
-		for _, id := range q.Expected {
+		for _, id := range q.IDs() {
 			if !known[id] && !slices.Contains(out, id) {
 				out = append(out, id)
 			}
