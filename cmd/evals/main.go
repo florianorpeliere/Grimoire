@@ -1,10 +1,12 @@
-// Command evals runs the evaluation sets. Its one subcommand, retrieval,
-// runs the retrieval smoke set (evals/retrieval-smoke.txt) through the SRD
-// search and reports, per configuration and group, how often an expected
-// chunk comes first and how often one is in the top results. It measures
-// only: a low score never makes it fail. It never calls a text-generation
-// API: the only remote calls are to the database at DATABASE_URL and the
-// Ollama embedding server at OLLAMA_HOST.
+// Command evals runs the evaluation sets. The retrieval subcommand runs the
+// retrieval smoke set (evals/retrieval-smoke.txt) through the SRD search and
+// reports, per configuration and group, how often an expected chunk comes
+// first and how often one is in the top results. It measures only: a low
+// score never makes it fail. The check subcommand validates the eval set
+// (evals/eval-set.txt): well-formed records and expected chunk ids that are
+// stored chunks. It never calls a text-generation API: the only remote calls
+// are to the database at DATABASE_URL and, for retrieval only, the Ollama
+// embedding server at OLLAMA_HOST.
 package main
 
 import (
@@ -24,6 +26,7 @@ import (
 	"github.com/florianorpeliere/grimoire/internal/db"
 	"github.com/florianorpeliere/grimoire/internal/embed"
 	"github.com/florianorpeliere/grimoire/internal/embed/ollama"
+	"github.com/florianorpeliere/grimoire/internal/evalset"
 	"github.com/florianorpeliere/grimoire/internal/search"
 )
 
@@ -35,11 +38,13 @@ const defaultSmokeFile = "evals/retrieval-smoke.txt"
 const top = search.DefaultLimit
 
 var usage = fmt.Sprintf(`usage: evals retrieval [file]
+       evals check [file]
 
-Runs every question of the retrieval smoke set (default %[1]s; format in
-evals/README.md) through the SRD search in the database at DATABASE_URL, and
-prints, per configuration and group, first-result and recall@%[2]d, the rank
-of each expected chunk id, and the misses. Configurations:
+retrieval: runs every question of the retrieval smoke set (default
+%[1]s; format in evals/README.md) through the SRD search in
+the database at DATABASE_URL, and prints, per configuration and group,
+first-result and recall@%[2]d, the rank of each expected chunk id, and the
+misses. Configurations:
   hybrid             hybrid search with the ask command's defaults
   keyword            keyword search only (needs no Ollama)
   vector             vector search only, prefix as the ask command's default
@@ -50,7 +55,16 @@ Exit status: 0 when every configuration ran, whatever the scores; 1 on error:
 an expected id that is not a stored chunk, an unreachable database, or
 Ollama unset, unreachable or failing (the keyword results are printed
 first); 2 on a usage error.
-`, defaultSmokeFile, top)
+
+check: parses the eval set (default %[3]s; format in evals/README.md),
+reports every malformed record with its line number, checks every expected
+chunk id against the chunks stored in the database at DATABASE_URL, then
+prints the number of questions per category next to the plan. A count below
+plan is not an error. It needs no Ollama and calls no text-generation API.
+
+Exit status: 0 when the file is valid, whatever the counts; 1 on a malformed
+record, an unknown chunk id or an unreachable database; 2 on a usage error.
+`, defaultSmokeFile, top, evalset.DefaultFile)
 
 // errUsage marks command-line mistakes, reported with exit code 2.
 var errUsage = errors.New("invalid usage")
@@ -80,38 +94,51 @@ func main() {
 	}
 }
 
-// parseArgs returns the smoke set file named by the command line.
-func parseArgs(args []string) (string, error) {
+// Subcommands.
+const (
+	cmdRetrieval = "retrieval"
+	cmdCheck     = "check"
+)
+
+// defaultFiles is the file of each subcommand when none is given.
+var defaultFiles = map[string]string{cmdRetrieval: defaultSmokeFile, cmdCheck: evalset.DefaultFile}
+
+// parseArgs returns the subcommand and the file named by the command line.
+func parseArgs(args []string) (cmd, file string, err error) {
 	if len(args) == 0 {
-		return "", fmt.Errorf("%w: the subcommand is missing", errUsage)
+		return "", "", fmt.Errorf("%w: the subcommand is missing", errUsage)
 	}
-	switch args[0] {
+	cmd = args[0]
+	switch cmd {
 	case "-h", "-help", "--help", "help":
-		return "", flag.ErrHelp
-	case "retrieval":
+		return "", "", flag.ErrHelp
+	case cmdRetrieval, cmdCheck:
 	default:
-		return "", fmt.Errorf("%w: unknown subcommand %q (want retrieval)", errUsage, args[0])
+		return "", "", fmt.Errorf("%w: unknown subcommand %q (want %s or %s)", errUsage, cmd, cmdRetrieval, cmdCheck)
 	}
 	switch rest := args[1:]; len(rest) {
 	case 0:
-		return defaultSmokeFile, nil
+		return cmd, defaultFiles[cmd], nil
 	case 1:
 		if strings.HasPrefix(rest[0], "-") {
 			if rest[0] == "-h" || rest[0] == "-help" || rest[0] == "--help" {
-				return "", flag.ErrHelp
+				return "", "", flag.ErrHelp
 			}
-			return "", fmt.Errorf("%w: unknown flag %q", errUsage, rest[0])
+			return "", "", fmt.Errorf("%w: unknown flag %q", errUsage, rest[0])
 		}
-		return rest[0], nil
+		return cmd, rest[0], nil
 	default:
-		return "", fmt.Errorf("%w: expected at most one file, got %d arguments", errUsage, len(rest))
+		return "", "", fmt.Errorf("%w: expected at most one file, got %d arguments", errUsage, len(rest))
 	}
 }
 
 func run(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer, newEmbedder newEmbedder) error {
-	file, err := parseArgs(args)
+	cmd, file, err := parseArgs(args)
 	if err != nil {
 		return err
+	}
+	if cmd == cmdCheck {
+		return runCheck(ctx, file, getenv, stdout)
 	}
 	qs, err := readSmoke(file)
 	if err != nil {

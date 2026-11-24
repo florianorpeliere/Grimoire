@@ -1,8 +1,8 @@
-# Common commands. migrate and eval-retrieval read DATABASE_URL (and
-# eval-retrieval OLLAMA_HOST) from the environment; test reads
+# Common commands. migrate, eval-retrieval and eval-check read DATABASE_URL
+# (and eval-retrieval OLLAMA_HOST) from the environment; test reads
 # TEST_DATABASE_URL only, and skips the integration tests when it is unset.
 
-.PHONY: build vet test migrate srd-dry-run srd eval-retrieval
+.PHONY: build vet test migrate srd-dry-run srd eval-retrieval eval-check
 
 build:
 	go build -o bin/ ./...
@@ -24,3 +24,6 @@ srd:
 
 eval-retrieval:
 	go run ./cmd/evals retrieval
+
+eval-check:
+	go run ./cmd/evals check

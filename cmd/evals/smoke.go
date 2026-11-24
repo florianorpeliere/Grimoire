@@ -51,7 +51,8 @@ func parseSmoke(r io.Reader) ([]question, error) {
 		nums = map[int]int{} // question number -> line
 	)
 	sc := bufio.NewScanner(r)
-	for line := 1; sc.Scan(); line++ {
+	line := 1
+	for ; sc.Scan(); line++ {
 		s := strings.TrimSpace(sc.Text())
 		if s == "" || strings.HasPrefix(s, "#") {
 			continue
@@ -70,7 +71,8 @@ func parseSmoke(r io.Reader) ([]question, error) {
 		qs = append(qs, q)
 	}
 	if err := sc.Err(); err != nil {
-		return nil, err
+		// Scan stopped on line, the one it could not read (a line too long).
+		return nil, fmt.Errorf("line %d: %w", line, err)
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, err

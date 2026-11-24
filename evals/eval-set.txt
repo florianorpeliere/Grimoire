@@ -1,0 +1,39 @@
+# Eval set (step 2, issue #28): hand-written questions with the expected answer
+# and the SRD chunks an answer should cite. Format and command: see
+# evals/README.md. Check the file with: make eval-check
+#
+# One record per block, records separated by a blank line:
+#
+#   <number> <category>
+#   Q: the question (indented lines continue it)
+#   A: the expected answer, in our own words (indented lines continue it)
+#   cite: one citation group: alternative chunk ids (indented lines add more)
+#   cite: another group; a correct citation has an id of every group
+#
+# category: rules (80 planned), interaction (40), refusal (15), campaign (15,
+# reserved until step 4). A refusal question has the single line "cite: -".
+# Comments are whole lines starting with #.
+#
+# Format examples, commented out so the command ignores them; they are not part
+# of the eval set. The test TestEvalSetExamples parses the lines that start with
+# "#>" (prefix removed) and checks their ids against the chunker output.
+#
+#> 1 rules
+#> Q: What saving throw does Fireball call for, and how much damage does it
+#>    deal?
+#> A: A Dexterity saving throw; 8d6 Fire damage on a failed save, half as much
+#>    on a success.
+#> cite: spells.fireball
+#>
+#> 2 interaction
+#> Q: Can I Misty Step away to avoid an Opportunity Attack?
+#> A: Yes. Misty Step teleports you, and teleportation never provokes an
+#>    Opportunity Attack.
+#> cite: playing-the-game.combat.melee-attacks
+#>       rules-glossary.teleportation
+#> cite: spells.misty-step
+#>
+#> 3 refusal
+#> Q: How does the Eldritch Knight fighter subclass work?
+#> A: The SRD does not say: the Eldritch Knight subclass is not in the SRD.
+#> cite: -
